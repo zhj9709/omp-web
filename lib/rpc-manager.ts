@@ -10,13 +10,12 @@
  * Never imports @oh-my-pi, @earendil-works, or any Bun-only runtime.
  */
 
-import { randomUUID } from "crypto";
 import { existsSync, realpathSync } from "fs";
 import { resolve } from "path";
-import { OmpRpcClient, type OmpEvent, type RpcResponse } from "./rpc-client";
+import { OmpRpcClient, type OmpEvent, type RpcCommand, type RpcResponse } from "./rpc-client";
 import { validateAgentImages } from "./image-attachments";
 import { invalidateSessionListCache } from "./session-reader";
-import type { SessionInfo, SessionMessageEntry } from "./types";
+import type { SessionInfo } from "./types";
 
 // ---------------------------------------------------------------------------
 // Types (public contract, preserved from pi-web)
@@ -30,9 +29,11 @@ export interface AgentEvent {
 type EventListener = (event: AgentEvent) => void;
 
 export interface RpcSessionStartOptions {
-  toolNames?: string[];
   initialModel?: { provider: string; modelId: string };
   thinkingLevel?: string;
+  steeringMode?: "all" | "one-at-a-time";
+  followUpMode?: "all" | "one-at-a-time";
+  interruptMode?: "immediate" | "wait";
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +81,13 @@ const DIRECT_COMMANDS: Record<string, string> = {
   bash: "bash",
   abort_bash: "abort_bash",
   get_available_commands: "get_available_commands",
+  set_steering_mode: "set_steering_mode",
+  set_follow_up_mode: "set_follow_up_mode",
+  set_interrupt_mode: "set_interrupt_mode",
+  set_todos: "set_todos",
+  set_subagent_subscription: "set_subagent_subscription",
+  get_subagents: "get_subagents",
+  get_subagent_messages: "get_subagent_messages",
 };
 
 /** Commands that have no OMP RPC equivalent. */
@@ -89,6 +97,31 @@ const UNSUPPORTED_COMMANDS = new Set([
   "reload",
   "extension_ui_input",
 ]);
+
+/**
+ * Extract the leading slash-command name from a prompt message, e.g.
+ * "/model foo" -> "model", "/skill:review --file x" -> "skill:review".
+ * Returns "" when the message is not a slash command.
+ */
+function extractCommandName(message: string): string {
+  const match = message.match(/^\/([^\s]+)/);
+  return match ? match[1] : "";
+}
+
+/**
+ * Thrown when a pi-web feature has no OMP RPC equivalent. Routes surface this
+ * as a machine-readable `code: "capability_unavailable"` so the UI can stop
+ * claiming a guardrail is active when it cannot be enforced.
+ */
+export class CapabilityUnavailableError extends Error {
+  readonly code = "capability_unavailable";
+  readonly feature: string;
+  constructor(feature: string, message: string) {
+    super(message);
+    this.name = "CapabilityUnavailableError";
+    this.feature = feature;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // OmpSessionWrapper
@@ -118,8 +151,14 @@ export class OmpSessionWrapper {
   private _thinkingLevel = "off";
   private _sessionName = "";
   private _autoCompactionEnabled = true;
+  private _fastModeEnabled = false;
+  private _fastModeActive = false;
   private _messageCount = 0;
   private _contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | null = null;
+  private _queuedSteeringMessages: string[] = [];
+  private _queuedFollowUpMessages: string[] = [];
+  private _subagentSubscriptionLevel: "off" | "progress" | "events" | null = null;
+  private _subagentSubscriptionAvailable = true;
 
   constructor(
     private readonly client: OmpRpcClient,
@@ -184,6 +223,25 @@ export class OmpSessionWrapper {
         err instanceof Error ? err.message : err,
       );
     });
+
+    // Forward subagent lifecycle/progress/event frames so the frontend can
+    // render a live roster. "events" includes everything "progress" does plus
+    // full subagent event frames. Track the requested level so the frontend
+    // can report subagent availability when the subscription fails.
+    const subagentLevel = "events";
+    this._subagentSubscriptionLevel = subagentLevel;
+    this.client
+      .sendCommand({ type: "set_subagent_subscription", level: subagentLevel })
+      .then(() => {
+        this._subagentSubscriptionAvailable = true;
+      })
+      .catch((err) => {
+        this._subagentSubscriptionAvailable = false;
+        console.error(
+          "[omp-web] failed to enable subagent subscription:",
+          err instanceof Error ? err.message : err,
+        );
+      });
 
     this.resetIdleTimer();
     notifyRunningChange();
@@ -251,7 +309,7 @@ export class OmpSessionWrapper {
           this._pendingPromptCount += 1;
           notifyRunningChange();
 
-          const rpcCmd: Record<string, unknown> = {
+          const rpcCmd: RpcCommand = {
             type: "prompt",
             message: command.message,
           };
@@ -271,6 +329,13 @@ export class OmpSessionWrapper {
               | undefined;
             if (data?.agentInvoked === false) {
               this.emit({ type: "prompt_done" });
+              // OMP intercepted a registered slash command and executed it
+              // natively. Report which command so the caller can surface it
+              // instead of silently swallowing the response.
+              return {
+                agentInvoked: false,
+                command: extractCommandName(command.message as string),
+              };
             }
             // If agentInvoked is true or absent, agent_end will signal completion
           } finally {
@@ -286,7 +351,7 @@ export class OmpSessionWrapper {
 
       case "steer":
       case "follow_up": {
-        const rpcCmd: Record<string, unknown> = {
+        const rpcCmd: RpcCommand = {
           type,
           message: command.message,
         };
@@ -370,6 +435,21 @@ export class OmpSessionWrapper {
         return null;
       }
 
+      // --- fast mode ---
+      case "set_fast_mode": {
+        const enabled = command.enabled as boolean;
+        const raw = await this.client.sendCommand<{
+          enabled: boolean;
+          active: boolean;
+        }>({
+          type: "set_fast_mode",
+          enabled,
+        });
+        this._fastModeEnabled = raw.enabled;
+        this._fastModeActive = raw.active;
+        return { enabled: raw.enabled, active: raw.active };
+      }
+
       // --- session ---
       case "set_session_name": {
         const name = (command.name as string | undefined)?.trim();
@@ -397,6 +477,63 @@ export class OmpSessionWrapper {
         return { text: raw.text ?? "" };
       }
 
+      case "export_html": {
+        const outputPath = command.outputPath as string | undefined;
+        const raw = await this.client.sendCommand<{ path?: string }>({
+          type: "export_html",
+          ...(outputPath ? { outputPath } : {}),
+        });
+        return { path: raw.path ?? "" };
+      }
+
+      // --- handoff ---
+      case "handoff": {
+        // Share the prompt admission lock so a handoff cannot slip in while a
+        // prompt is queued (admitted) but has not yet incremented the pending
+        // prompt count.
+        const releaseAdmission = await this.acquirePromptAdmission();
+        try {
+          if (
+            this._isStreaming ||
+            this._pendingPromptCount > 0 ||
+            this._isCompacting ||
+            this._isBashRunning
+          ) {
+            throw new Error("Cannot hand off while the session is busy");
+          }
+
+          const previousId = this._sessionId;
+          const result = await this.client.sendCommand<{ savedPath?: string }>({
+            type: "handoff",
+            ...(command.customInstructions
+              ? { customInstructions: command.customInstructions }
+              : {}),
+          });
+
+          // Handoff switches the RPC process to a brand-new child session.
+          // Re-sync so the wrapper tracks the new id/file, then re-key the
+          // registry so future lookups for the new id reuse this live process.
+          await this.syncStateStrict();
+
+          // A successful handoff must produce a new session id. If it did not
+          // (e.g. the RPC handoff silently no-oped), fail explicitly so the
+          // caller does not keep pointing at the old session id.
+          if (!this._sessionId || this._sessionId === previousId) {
+            throw new Error("Handoff did not create a new session");
+          }
+
+          this.rebindRegistryKey(previousId);
+          invalidateSessionListCache();
+          return {
+            savedPath: result?.savedPath,
+            sessionId: this._sessionId,
+            sessionFile: this._sessionFile,
+          };
+        } finally {
+          releaseAdmission();
+        }
+      }
+
       // --- fork / navigate ---
       case "fork": {
         if (this._isBashRunning) {
@@ -406,25 +543,15 @@ export class OmpSessionWrapper {
         const entryId = command.entryId as string;
         if (!entryId) throw new Error("entryId is required for fork");
 
-        // Create a new session as a child of the current session
-        const response = await this.client.send({
-          type: "new_session",
-          parentSession: this._sessionFile,
-        });
-
-        if (!response.success) {
-          throw new Error(response.error ?? "fork failed");
-        }
-
-        const data = response.data as
-          | { sessionId?: string; sessionFile?: string }
-          | undefined;
-        const newSessionId = data?.sessionId ?? "";
-        const newSessionFile = data?.sessionFile ?? "";
-
-        invalidateSessionListCache();
-        await this.shutdown();
-        return { cancelled: false, newSessionId, newSessionFile };
+        // OMP RPC `new_session` only accepts `parentSession` and forks the
+        // entire transcript; it has no entryId/fromEntryId parameter to
+        // truncate history at a specific message. Silently forking the whole
+        // session would hand the caller a different history than requested, so
+        // fail explicitly instead.
+        throw new CapabilityUnavailableError(
+          "fork_at_entry",
+          "Forking at a specific message is not supported in OMP RPC mode.",
+        );
       }
 
       case "navigate_tree": {
@@ -482,18 +609,15 @@ export class OmpSessionWrapper {
 
       case "set_tools": {
         // OMP doesn't support per-session tool filtering via RPC.
-        // The closest equivalent is set_host_tools, but that's for host-owned tools.
-        // We accept the command but it's a no-op for the OMP process.
-        const toolNames = command.toolNames as string[];
-        if (toolNames.length === 0) {
-          // All tools disabled — OMP doesn't support this via RPC
-          // Return a structured error so the UI can handle it
-          throw new Error(
-            "Tool filtering is not supported in OMP RPC mode. " +
-              "Use the OMP CLI to configure tool access.",
-          );
-        }
-        return null;
+        // set_host_tools only adds host-owned tools, and the spawn-time
+        // --tools flag rejects pi tool names (bash/edit/find/ls are not valid
+        // OMP entries), so no requested preset can be applied here. Never
+        // return success: the UI must not show a preset as enforced when it
+        // is not.
+        throw new Error(
+          "Tool filtering is not supported in OMP RPC mode. " +
+            "Use the OMP CLI to configure tool access.",
+        );
       }
 
       // --- bash ---
@@ -549,10 +673,10 @@ export class OmpSessionWrapper {
       // --- unsupported ---
       default: {
         if (UNSUPPORTED_COMMANDS.has(type)) {
-          return {
-            unsupported_command: type,
-            message: `Command "${type}" is not supported in OMP RPC mode.`,
-          };
+          throw new CapabilityUnavailableError(
+            type,
+            `Command "${type}" is not supported in OMP RPC mode.`,
+          );
         }
         // Try direct mapping
         const ompType = DIRECT_COMMANDS[type];
@@ -568,36 +692,103 @@ export class OmpSessionWrapper {
       }
     }
   }
+  /**
+   * Raw OMP model connection for server-side model calls (e.g. title
+   * generation). Deliberately separate from the mapped `get_state` output:
+   * `headers` may contain an API key and must never reach the browser.
+   */
+  async getModelConnection(): Promise<
+    | {
+        id: string;
+        baseUrl?: string;
+        api?: string;
+        headers: Record<string, string>;
+      }
+    | undefined
+  > {
+    const raw = await this.client.sendCommand<Record<string, unknown>>({
+      type: "get_state",
+    });
+    const model = raw.model as
+      | {
+          id?: string;
+          baseUrl?: string;
+          api?: string;
+          headers?: unknown;
+        }
+      | undefined;
+    if (!model?.id) return undefined;
+
+    const headers: Record<string, string> = {};
+    if (typeof model.headers === "object" && model.headers !== null) {
+      for (const [key, value] of Object.entries(model.headers)) {
+        if (typeof value === "string") headers[key] = value;
+      }
+    }
+
+    return {
+      id: model.id,
+      baseUrl: typeof model.baseUrl === "string" ? model.baseUrl : undefined,
+      api: typeof model.api === "string" ? model.api : undefined,
+      headers,
+    };
+  }
 
   // -- internals -------------------------------------------------------------
 
   private async syncState(): Promise<void> {
     try {
-      const raw = await this.client.sendCommand<Record<string, unknown>>({
-        type: "get_state",
-      });
-      const state = this.mapGetState(raw);
-      this._sessionId = state.sessionId as string;
-      this._sessionFile = state.sessionFile as string;
-      this._isStreaming = state.isStreaming as boolean;
-      this._isCompacting = state.isCompacting as boolean;
-      this._autoCompactionEnabled = state.autoCompactionEnabled as boolean;
-      this._messageCount = state.messageCount as number;
-      this._thinkingLevel = state.thinkingLevel as string;
-      this._sessionName = (raw.sessionName as string) ?? "";
-      if (state.model) {
-        this._model = state.model as { provider: string; id: string };
-      }
-      if (state.contextUsage) {
-        this._contextUsage = state.contextUsage as {
-          tokens: number | null;
-          contextWindow: number;
-          percent: number | null;
-        };
-      }
+      await this.syncStateStrict();
     } catch {
       // Initial sync is best-effort
     }
+  }
+
+  /**
+   * Sync wrapper state from OMP, throwing on failure. Callers that mutate the
+   * session identity (e.g. handoff) must use this variant: swallowing the error
+   * there would leave the wrapper tracking a stale session id/file.
+   */
+  private async syncStateStrict(): Promise<void> {
+    const raw = await this.client.sendCommand<Record<string, unknown>>({
+      type: "get_state",
+    });
+    const state = this.mapGetState(raw);
+    this._sessionId = state.sessionId as string;
+    this._sessionFile = state.sessionFile as string;
+    this._isStreaming = state.isStreaming as boolean;
+    this._isCompacting = state.isCompacting as boolean;
+    this._autoCompactionEnabled = state.autoCompactionEnabled as boolean;
+    this._fastModeEnabled = (raw.fastModeEnabled as boolean) ?? false;
+    this._fastModeActive = (raw.fastModeActive as boolean) ?? false;
+    this._messageCount = state.messageCount as number;
+    this._thinkingLevel = state.thinkingLevel as string;
+    this._sessionName = (raw.sessionName as string) ?? "";
+    if (state.model) {
+      this._model = state.model as { provider: string; id: string };
+    }
+    if (state.contextUsage) {
+      this._contextUsage = state.contextUsage as {
+        tokens: number | null;
+        contextWindow: number;
+        percent: number | null;
+      };
+    }
+  }
+
+  /**
+   * Move the wrapper's registry entry to its current session id. Handoff
+   * switches the RPC process to a brand-new child session, so the old key is
+   * dropped and the new id must resolve to this still-live wrapper.
+   */
+  private rebindRegistryKey(previousId: string): void {
+    const registry = getRegistry();
+    const newId = this._sessionId;
+    if (!newId || newId === previousId) return;
+    if (registry.get(previousId) === this) registry.delete(previousId);
+    registry.set(newId, this);
+    // Destroy must remove the current key, not the original one.
+    this.onDestroyCallback = () => registry.delete(newId);
   }
 
   private handleOmpEvent(event: OmpEvent): void {
@@ -642,6 +833,16 @@ export class OmpSessionWrapper {
       case "message_end":
         this._messageCount++;
         break;
+      case "queue_update": {
+        const queueEvent = event as { steering?: unknown; followUp?: unknown };
+        this._queuedSteeringMessages = Array.isArray(queueEvent.steering)
+          ? queueEvent.steering.filter((m): m is string => typeof m === "string")
+          : [];
+        this._queuedFollowUpMessages = Array.isArray(queueEvent.followUp)
+          ? queueEvent.followUp.filter((m): m is string => typeof m === "string")
+          : [];
+        break;
+      }
     }
 
     if (IDLE_RESET_EVENT_TYPES.has(event.type)) {
@@ -722,7 +923,10 @@ export class OmpSessionWrapper {
           : undefined,
       messageCount: (raw.messageCount as number) ?? 0,
       pendingMessageCount: (raw.queuedMessageCount as number) ?? 0,
-      queuedMessages: { steering: [], followUp: [] },
+      queuedMessages: {
+        steering: [...this._queuedSteeringMessages],
+        followUp: [...this._queuedFollowUpMessages],
+      },
       contextUsage: contextUsage
         ? {
             percent: contextUsage.percent,
@@ -734,6 +938,18 @@ export class OmpSessionWrapper {
         ? systemPrompt.join("\n")
         : (systemPrompt ?? ""),
       thinkingLevel: (raw.thinkingLevel as string) ?? this._thinkingLevel,
+      steeringMode: (raw.steeringMode as string) ?? "one-at-a-time",
+      followUpMode: (raw.followUpMode as string) ?? "one-at-a-time",
+      interruptMode: (raw.interruptMode as string) ?? "immediate",
+      todoPhases: Array.isArray(raw.todoPhases) ? raw.todoPhases : [],
+      fastModeEnabled:
+        (raw.fastModeEnabled as boolean) ?? this._fastModeEnabled,
+      fastModeActive:
+        (raw.fastModeActive as boolean) ?? this._fastModeActive,
+      subagentSubscription: {
+        level: this._subagentSubscriptionLevel,
+        available: this._subagentSubscriptionAvailable,
+      },
       extensionStatuses: [],
       extensionWidgets: [],
     };
@@ -813,7 +1029,7 @@ export async function startRpcSession(
   cwd: string | undefined,
   options: RpcSessionStartOptions = {},
 ): Promise<{ session: OmpSessionWrapper; realSessionId: string }> {
-  const { toolNames, initialModel, thinkingLevel } = options;
+  const { initialModel, thinkingLevel, steeringMode, followUpMode, interruptMode } = options;
   const registry = getRegistry();
   const locks = getLocks();
 
@@ -830,10 +1046,6 @@ export async function startRpcSession(
   const starting = (async () => {
     const client = new OmpRpcClient({
       cwd: resolvedCwd,
-      env: {
-        // Allow overriding the omp binary path
-        ...(process.env.OMP_BINARY ? { OMP_BINARY: undefined } : {}),
-      },
     });
 
     await client.start();
@@ -869,6 +1081,17 @@ export async function startRpcSession(
         type: "set_thinking_level",
         level: thinkingLevel,
       });
+    }
+
+    // Apply queue modes if specified (new-session defaults from the UI)
+    if (steeringMode) {
+      await client.sendCommand({ type: "set_steering_mode", mode: steeringMode });
+    }
+    if (followUpMode) {
+      await client.sendCommand({ type: "set_follow_up_mode", mode: followUpMode });
+    }
+    if (interruptMode) {
+      await client.sendCommand({ type: "set_interrupt_mode", mode: interruptMode });
     }
 
     const wrapper = new OmpSessionWrapper(client, {
