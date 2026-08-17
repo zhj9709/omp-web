@@ -1,281 +1,274 @@
-import { randomUUID } from "crypto";
-import { execFile } from "child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { basename, dirname, join } from "path";
-import { promisify } from "util";
-import { fileURLToPath, pathToFileURL } from "url";
 import { NextResponse } from "next/server";
-import { resolveSessionPath } from "@/lib/session-reader";
+import { marked } from "marked";
+import {
+  resolveSessionPath,
+  getSessionEntries,
+  buildSessionContext,
+  readSessionHeader,
+} from "@/lib/session-reader";
+import { getRpcSession } from "@/lib/rpc-manager";
+import { computeLeafId } from "@/lib/session-tree";
+import type {
+  AgentMessage,
+  AssistantContentBlock,
+  ImageContent,
+  TextContent,
+  ThinkingContent,
+  ToolCallContent,
+} from "@/lib/types";
 
-const execFileAsync = promisify(execFile);
+export const dynamic = "force-dynamic";
 
-export const runtime = "nodejs";
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
-type PiCodingAgentModule = {
-  getPackageDir: () => string;
-};
+function renderMarkdown(text: string): string {
+  return marked.parse(text, { breaks: true, gfm: true }) as string;
+}
 
-type ExportHtmlModule = {
-  exportFromFile: (inputPath: string, outputPath: string) => Promise<string>;
-};
-
-async function getPiPackageDir(): Promise<string | null> {
-  try {
-    const { getPackageDir } = (await import("@earendil-works/pi-coding-agent")) as PiCodingAgentModule;
-    return getPackageDir();
-  } catch {
-    return null;
+function imageSource(img: ImageContent): string {
+  const flat = img as unknown as { data?: string; mimeType?: string };
+  if (img.source) {
+    return img.source.type === "base64"
+      ? `data:${img.source.media_type ?? "image/png"};base64,${img.source.data ?? ""}`
+      : img.source.url ?? "";
   }
+  return flat.data ? `data:${flat.mimeType ?? "image/png"};base64,${flat.data}` : "";
 }
 
-function encodeHeaderValue(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (ch) =>
-    `%${ch.charCodeAt(0).toString(16).toUpperCase()}`
-  );
+function renderImages(images: ImageContent[]): string {
+  return images
+    .map((img) => {
+      const src = imageSource(img);
+      return src ? `<img class="msg-img" src="${escapeHtml(src)}" alt="image" />` : "";
+    })
+    .join("");
 }
 
-function getContentDisposition(fileName: string, inline: boolean): string {
-  const fallback = fileName.replace(/[^\x20-\x7E]|["\\;\r\n]/g, "_") || "session.html";
-  const disposition = inline ? "inline" : "attachment";
-  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeHeaderValue(fileName)}`;
-}
-
-async function getPiCliPath(): Promise<string | null> {
-  const candidates = new Set<string>();
-  const packageDir = await getPiPackageDir();
-
-  if (packageDir) {
-    candidates.add(join(packageDir, "dist", "cli.js"));
+function renderTextOrBlocks(content: string | (TextContent | ImageContent)[]): string {
+  if (typeof content === "string") return renderMarkdown(content);
+  const parts: string[] = [];
+  const images: ImageContent[] = [];
+  for (const block of content) {
+    if (block.type === "text") parts.push(block.text);
+    else if (block.type === "image") images.push(block);
   }
+  return renderMarkdown(parts.join("\n\n")) + renderImages(images);
+}
 
-  try {
-    const resolver = (import.meta as ImportMeta & {
-      resolve?: (specifier: string) => string | Promise<string>;
-    }).resolve;
-    if (typeof resolver === "function") {
-      const indexUrl = await resolver("@earendil-works/pi-coding-agent");
-      candidates.add(join(dirname(fileURLToPath(indexUrl)), "cli.js"));
+function renderThinking(block: ThinkingContent): string {
+  return `<details class="thinking"><summary>Thinking</summary><div class="thinking-body">${renderMarkdown(block.thinking)}</div></details>`;
+}
+
+function renderToolCall(block: ToolCallContent): string {
+  const name = block.toolName || "tool";
+  const hasInput = block.input && Object.keys(block.input).length > 0;
+  const inputHtml = hasInput
+    ? `<pre class="tool-input">${escapeHtml(JSON.stringify(block.input, null, 2))}</pre>`
+    : "";
+  return `<div class="tool-call"><span class="tool-call-name">Tool: ${escapeHtml(name)}</span>${inputHtml}</div>`;
+}
+
+function renderAssistantContent(content: AssistantContentBlock[]): string {
+  return content
+    .map((block) => {
+      switch (block.type) {
+        case "text": return renderMarkdown(block.text);
+        case "thinking": return renderThinking(block);
+        case "toolCall": return renderToolCall(block);
+        case "image": return renderImages([block]);
+        default: return "";
+      }
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function renderMessage(message: AgentMessage): string {
+  switch (message.role) {
+    case "user":
+      return `<article class="msg msg-user"><div class="msg-role">User</div><div class="msg-body">${renderTextOrBlocks(message.content)}</div></article>`;
+
+    case "assistant": {
+      const modelLabel = message.provider
+        ? `${message.provider}/${message.model}`
+        : message.model;
+      const modelHtml = modelLabel
+        ? ` <span class="msg-model">${escapeHtml(modelLabel)}</span>`
+        : "";
+      return `<article class="msg msg-assistant"><div class="msg-role">Assistant${modelHtml}</div><div class="msg-body">${renderAssistantContent(message.content)}</div></article>`;
     }
-  } catch {
-    // Next.js production bundles can strip import.meta.resolve.
-  }
 
-  candidates.add(
-    join(
-      process.cwd(),
-      "node_modules",
-      "@earendil-works",
-      "pi-coding-agent",
-      "dist",
-      "cli.js"
-    )
-  );
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-/**
- * Patch the exported HTML to fix recursive functions that overflow
- * the call stack on deep linear session trees (e.g., 5000+ entries).
- *
- * ## Root Cause
- * pi-coding-agent's template.js uses recursive helpers to render and
- * navigate the session tree in the exported HTML:
- *
- *   1. sortChildren(node) — recursively sorts children of every node.
- *      Calls itself via node.children.forEach(sortChildren).
- *      On a 5527-entry linear chain (no branches), this recurses 5527
- *      levels deep → stack overflow.
- *
- *   2. mapNodes(node) — recursively indexes tree nodes the first time
- *      a tree item is clicked. Same depth -> same overflow.
- *
- *   3. markActive(node) — recursively marks nodes on the active path.
- *      Calls itself via markActive(child) for each child.
- *      Same depth → same overflow.
- *
- * Both functions are inlined in the HTML by pi-coding-agent at export
- * time. We cannot modify template.js directly (it's in node_modules
- * and would be overwritten on npm install). Instead, we patch the
- * generated HTML string before returning it to the client.
- *
- * ## Fix
- * Replace each recursive function with an iterative equivalent:
- *
- *   sortChildren  → explicit stack (DFS pre-order, push children in
- *                   reverse to maintain order)
- *   mapNodes      → explicit stack (DFS pre-order)
- *   markActive    → two-stack post-order (stack1 for traversal,
- *                   stack2 for processing children before parent)
- *
- * ## Line Ending Normalization
- * This file (route.ts) uses CRLF (Windows), while template.js uses LF
- * (Unix). The template strings in the backtick literals inherit the
- * file's CRLF line endings. At runtime, readFileSync() also returns
- * CRLF on Windows. We normalize everything to LF before matching.
- *
- * The helper `n(s)` strips \r\n → \n on both the HTML and the
- * replacement strings, ensuring cross-platform matching.
- */
-function patchExportHtml(html: string): string {
-  // Normalize line endings: route.ts is CRLF, template.js is LF.
-  // Without this, the replace() below would fail on Windows.
-  const n = (s: string) => s.replace(/\r\n/g, "\n");
-  html = n(html);
-
-  const replaceRequired = (source: string, name: string, search: string, replacement: string) => {
-    const normalizedSearch = n(search);
-    const normalizedReplacement = n(replacement);
-    const matches = source.split(normalizedSearch).length - 1;
-    if (matches !== 1) {
-      throw new Error(`Failed to patch exported HTML: ${name} expected 1 match, found ${matches}`);
+    case "toolResult": {
+      const label = message.toolName
+        ? `Tool result: ${message.toolName}`
+        : "Tool result";
+      const errorClass = message.isError ? " msg-error" : "";
+      return `<article class="msg msg-tool${errorClass}"><div class="msg-role">${escapeHtml(label)}</div><div class="msg-body">${renderTextOrBlocks(message.content)}</div></article>`;
     }
-    return source.replace(normalizedSearch, normalizedReplacement);
-  };
 
-  html = replaceRequired(
-    html,
-    "sortChildren",
-    `        function sortChildren(node) {
-          node.children.sort((a, b) =>
-            new Date(a.entry.timestamp).getTime() - new Date(b.entry.timestamp).getTime()
-          );
-          node.children.forEach(sortChildren);
-        }`,
-    `        function sortChildren(root) {
-          const stack = [root];
-          while (stack.length) {
-            const node = stack.pop();
-            node.children.sort((a, b) =>
-              new Date(a.entry.timestamp).getTime() - new Date(b.entry.timestamp).getTime()
-            );
-            for (let i = node.children.length - 1; i >= 0; i--) {
-              stack.push(node.children[i]);
-            }
-          }
-        }`
-  );
+    case "custom": {
+      if (!message.display) return "";
+      return `<article class="msg msg-custom"><div class="msg-role">${escapeHtml(message.customType || "custom")}</div><div class="msg-body">${renderTextOrBlocks(message.content)}</div></article>`;
+    }
 
-  html = replaceRequired(
-    html,
-    "mapNodes",
-    `          function mapNodes(node) {
-            treeNodeMap.set(node.entry.id, node);
-            node.children.forEach(mapNodes);
-          }
-          tree.forEach(mapNodes);`,
-    `          const stack = [...tree].reverse();
-          while (stack.length) {
-            const node = stack.pop();
-            treeNodeMap.set(node.entry.id, node);
-            for (let i = node.children.length - 1; i >= 0; i--) {
-              stack.push(node.children[i]);
-            }
-          }`
-  );
+    case "bashExecution": {
+      const meta = message.exitCode !== undefined ? ` (exit ${message.exitCode})` : "";
+      return `<article class="msg msg-bash"><div class="msg-role">Command${meta}</div><pre class="bash-cmd">${escapeHtml(message.command)}</pre><pre class="bash-out">${escapeHtml(message.output)}</pre></article>`;
+    }
 
-  html = replaceRequired(
-    html,
-    "markActive",
-    `        function markActive(node) {
-          let has = activePathIds.has(node.entry.id);
-          for (const child of node.children) {
-            if (markActive(child)) has = true;
-          }
-          containsActive.set(node, has);
-          return has;
-        }`,
-    `        function markActive(root) {
-          // Post-order traversal using two stacks
-          const stack1 = [root];
-          const stack2 = [];
-          while (stack1.length) {
-            const node = stack1.pop();
-            stack2.push(node);
-            for (const child of node.children) {
-              stack1.push(child);
-            }
-          }
-          while (stack2.length) {
-            const node = stack2.pop();
-            let has = activePathIds.has(node.entry.id);
-            for (const child of node.children) {
-              if (containsActive.get(child)) has = true;
-            }
-            containsActive.set(node, has);
-          }
-        }`
-  );
-
-  return html;
-}
-
-async function exportSession(filePath: string, outputPath: string): Promise<void> {
-  const cliPath = await getPiCliPath();
-  if (cliPath) {
-    await execFileAsync(process.execPath, [cliPath, "--export", filePath, outputPath], {
-      cwd: process.cwd(),
-      timeout: 30_000,
-      env: {
-        ...process.env,
-        PI_OFFLINE: "1",
-        PI_SKIP_VERSION_CHECK: "1",
-      },
-      maxBuffer: 1024 * 1024,
-    });
-    return;
+    default:
+      return "";
   }
-
-  const packageDir = await getPiPackageDir();
-  if (!packageDir) throw new Error("pi CLI not found");
-
-  const exporterUrl = pathToFileURL(join(packageDir, "dist", "core", "export-html", "index.js")).href;
-  const { exportFromFile } = (await import(exporterUrl)) as ExportHtmlModule;
-  await exportFromFile(filePath, outputPath);
 }
 
+function safeFilename(name: string): string {
+  const cleaned = name.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  return cleaned || "session";
+}
+
+function buildHtmlPage(title: string, cwd: string, messages: AgentMessage[]): string {
+  const body = messages.map(renderMessage).filter(Boolean).join("\n");
+  const cwdHtml = cwd ? `<div class="meta">${escapeHtml(cwd)}</div>` : "";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.55;
+  background: #f6f7f9;
+  color: #1c1e21;
+  padding-bottom: 4rem;
+}
+@media (prefers-color-scheme: dark) {
+  body { background: #181a1d; color: #e4e6e8; }
+}
+.export-header {
+  position: sticky;
+  top: 0;
+  padding: 1rem 1.5rem;
+  background: #ffffff;
+  border-bottom: 1px solid #e3e5e8;
+}
+@media (prefers-color-scheme: dark) {
+  .export-header { background: #202327; border-color: #34373b; }
+}
+.export-header h1 { margin: 0; font-size: 1.25rem; }
+.export-header .meta { margin-top: 0.25rem; font-size: 0.8rem; color: #6b7280; word-break: break-all; }
+.conversation { max-width: 900px; margin: 0 auto; padding: 1.5rem 1rem; }
+.msg { margin: 0 0 1rem; padding: 0.75rem 1rem; border-radius: 10px; background: #ffffff; border: 1px solid #e3e5e8; }
+@media (prefers-color-scheme: dark) {
+  .msg { background: #202327; border-color: #34373b; }
+}
+.msg-role { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.35rem; }
+.msg-user .msg-role { color: #2563eb; }
+.msg-assistant .msg-role { color: #059669; }
+.msg-tool .msg-role { color: #b45309; }
+.msg-custom .msg-role { color: #7c3aed; }
+.msg-bash .msg-role { color: #db2777; }
+.msg-error .msg-role { color: #dc2626; }
+.msg-model { font-weight: 400; text-transform: none; color: #6b7280; }
+.msg-body > :first-child { margin-top: 0; }
+.msg-body > :last-child { margin-bottom: 0; }
+.msg-img { max-width: 100%; border-radius: 6px; margin: 0.5rem 0; display: block; }
+pre {
+  background: #0f1115;
+  color: #e6e8eb;
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+:not(pre) > code { background: rgba(128,128,128,0.15); padding: 0.1em 0.3em; border-radius: 4px; }
+.tool-call { border: 1px dashed #cbd5e1; border-radius: 6px; padding: 0.5rem 0.75rem; margin: 0.5rem 0; }
+@media (prefers-color-scheme: dark) {
+  .tool-call { border-color: #475569; }
+}
+.tool-call-name { font-weight: 600; font-size: 0.85rem; }
+.tool-input { margin: 0.5rem 0 0; }
+.thinking { margin: 0.5rem 0; }
+.thinking summary { cursor: pointer; font-size: 0.85rem; color: #6b7280; }
+.thinking-body { border-left: 3px solid #d1d5db; padding-left: 0.75rem; margin-top: 0.5rem; color: #6b7280; }
+.bash-cmd { margin: 0.25rem 0; }
+.bash-out { margin: 0.25rem 0 0; white-space: pre-wrap; word-break: break-word; }
+blockquote { border-left: 3px solid #d1d5db; margin: 0.5rem 0; padding-left: 0.75rem; color: #6b7280; }
+a { color: #2563eb; }
+@media (prefers-color-scheme: dark) {
+  a { color: #60a5fa; }
+}
+table { border-collapse: collapse; margin: 0.5rem 0; }
+th, td { border: 1px solid #d1d5db; padding: 0.3rem 0.6rem; }
+</style>
+</head>
+<body>
+<header class="export-header">
+<h1>${escapeHtml(title)}</h1>
+${cwdHtml}
+</header>
+<main class="conversation">
+${body}
+</main>
+</body>
+</html>`;
+}
+
+// GET /api/sessions/[id]/export
+// Renders a self-contained HTML export of the full session transcript directly
+// from the session JSONL file (no OMP process required). `?inline=1` displays
+// the page in the browser; otherwise it is served as an attachment download.
 export async function GET(
   req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const inline = new URL(req.url).searchParams.get("inline") === "1";
+  const url = new URL(req.url);
+  const inline = url.searchParams.get("inline") === "1";
 
   try {
-    const filePath = await resolveSessionPath(id);
+    const rpc = getRpcSession(id);
+    const liveRpc = rpc?.isAlive() ? rpc : undefined;
+    const filePath = liveRpc?.sessionFile || await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    const tempDir = join(tmpdir(), "pi-web-export");
-    mkdirSync(tempDir, { recursive: true });
+    const header = readSessionHeader(filePath);
+    const entries = getSessionEntries(filePath);
+    const leafId = computeLeafId(entries);
+    const context = buildSessionContext(entries, leafId);
+    const title = header?.title || header?.id || "Session";
 
-    const sessionBase = basename(filePath, ".jsonl");
-    const fileName = `pi-session-${sessionBase}.html`;
-    const outputPath = join(tempDir, `${randomUUID()}.html`);
+    const html = buildHtmlPage(title, header?.cwd ?? "", context.messages);
 
-    try {
-      await exportSession(filePath, outputPath);
-
-      const html = readFileSync(outputPath, "utf8");
-      const patchedHtml = patchExportHtml(html);
-      return new Response(patchedHtml, {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "Content-Disposition": getContentDisposition(fileName, inline),
-          "Cache-Control": "no-cache",
-          "Content-Security-Policy": "frame-ancestors 'none'",
-          "X-Content-Type-Options": "nosniff",
-          "X-Frame-Options": "DENY",
-        },
-      });
-    } finally {
-      rmSync(outputPath, { force: true });
+    const headers: Record<string, string> = {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      // The page embeds no scripts and disallows script execution via CSP, so
+      // raw HTML in rendered markdown cannot execute in the viewing origin.
+      "Content-Security-Policy":
+        "default-src 'none'; img-src data: https: http:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    };
+    if (!inline) {
+      headers["Content-Disposition"] =
+        `attachment; filename="${safeFilename(title)}.html"`;
     }
+
+    return new NextResponse(html, { headers });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
