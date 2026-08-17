@@ -12,7 +12,7 @@ type ThemeState = {
 
 type ToggleOrigin = { x: number; y: number };
 
-const STORAGE_KEY = "pi-theme";
+const STORAGE_KEY = "omp-theme";
 const PREFERENCE_CYCLE: ThemePreference[] = ["light", "dark", "auto"];
 const SERVER_SNAPSHOT: ThemeState = { preference: "auto", theme: "light" };
 

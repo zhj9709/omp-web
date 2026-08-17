@@ -22,7 +22,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
 
-  const password = process.env.PI_WEB_PASSWORD;
+  const password = process.env.OMP_WEB_PASSWORD;
   if (
     isWebPasswordEnabled(password)
     && !isValidBasicAuthorization(request.headers.get("authorization"), password)
@@ -30,8 +30,7 @@ export function proxy(request: NextRequest) {
     return new NextResponse("Authentication required", {
       status: 401,
       headers: {
-        "Cache-Control": "no-store",
-        "WWW-Authenticate": 'Basic realm="Pi Web", charset="UTF-8"',
+        "WWW-Authenticate": 'Basic realm="OMP Web", charset="UTF-8"',
       },
     });
   }

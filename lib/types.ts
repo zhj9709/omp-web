@@ -7,6 +7,9 @@ export interface SessionHeader {
   timestamp: string;
   cwd: string;
   parentSession?: string;
+  /** OMP session header fields */
+  title?: string;
+  titleSource?: string;
 }
 
 export interface SessionEntryBase {
@@ -219,12 +222,25 @@ export interface SessionMessageEntry extends SessionEntryBase {
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {
   type: "thinking_level_change";
   thinkingLevel: string;
+  /** OMP: the configured level (may differ from effective thinkingLevel) */
+  configured?: string | null;
 }
 
 export interface ModelChangeEntry extends SessionEntryBase {
   type: "model_change";
-  provider: string;
-  modelId: string;
+  /** Pi format: separate provider and modelId */
+  provider?: string;
+  modelId?: string;
+  /** OMP format: single "provider/modelId" string */
+  model?: string;
+  resolvedModelIsFallback?: boolean;
+}
+
+/** OMP title_change entry: records a title update in the session tree */
+export interface TitleChangeEntry extends SessionEntryBase {
+  type: "title_change";
+  title: string;
+  source: string;
 }
 
 export interface CompactionEntry extends SessionEntryBase {
@@ -278,7 +294,8 @@ export type SessionEntry =
   | CustomEntry
   | CustomMessageEntry
   | LabelEntry
-  | SessionInfoEntry;
+  | SessionInfoEntry
+  | TitleChangeEntry;
 
 export type FileEntry = SessionHeader | SessionEntry;
 
