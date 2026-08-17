@@ -215,7 +215,7 @@ function scanEncodedCwdDir(dirPath: string, pathToId: Map<string, string>): Sess
 
     cacheSessionPath(id, filePath);
     if (parentSession) pathToId.set(sessionPathKey(parentSession), ""); // placeholder
-
+    cacheSessionPath(id, filePath);
     results.push({
       path: filePath,
       id,
@@ -225,9 +225,54 @@ function scanEncodedCwdDir(dirPath: string, pathToId: Map<string, string>): Sess
       modified: stat.mtime.toISOString(),
       messageCount,
       firstMessage,
-      parentSessionId: parentSession ? undefined : undefined, // resolved below
+      parentSessionId: parentSession ? undefined : undefined, // resolved below in loadAllSessions
       transient: false,
     });
+  }
+
+  return results;
+}
+
+async function loadAllSessions(): Promise<SessionInfo[]> {
+  const pathToId = new Map<string, string>();
+  const allSessions: SessionInfo[] = [];
+
+  // Scan OMP sessions directory: <sessionsDir>/<encoded-cwd>/<session>.jsonl
+  let cwdDirs: string[];
+  try {
+    cwdDirs = readdirSync(SESSIONS_DIR, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return []; // sessions dir doesn't exist or is unreadable
+  }
+
+  for (const dirName of cwdDirs) {
+    const dirPath = join(SESSIONS_DIR, dirName);
+    try {
+      const sessions = scanEncodedCwdDir(dirPath, pathToId);
+      allSessions.push(...sessions);
+    } catch {
+      // skip unreadable cwd directory
+    }
+  }
+
+  // Build path-to-id map from all loaded sessions
+  for (const s of allSessions) {
+    pathToId.set(sessionPathKey(s.path), s.id);
+  }
+
+  // Resolve parentSessionId: look up the parent's id from the parentSession path
+  for (const s of allSessions) {
+    const header = readSessionHeader(s.path);
+    if (header?.parentSession) {
+      const parentId = pathToId.get(sessionPathKey(header.parentSession));
+      (s as { parentSessionId?: string }).parentSessionId = parentId;
+    }
+  }
+
+  return attachSessionProjectInfo(allSessions);
+}
   }
 
   // Resolve parentSessionId after all sessions in this batch are collected
@@ -419,6 +464,7 @@ export function readSessionHeader(filePath: string): SessionHeader | null {
     const maxHeaderBytes = 64 * 1024;
     let position = 0;
     let linesRead = 0;
+    let firstLine: string | null = null;
     let headerLine: string | null = null;
 
     while (position < maxHeaderBytes && linesRead < 2) {
@@ -431,17 +477,27 @@ export function readSessionHeader(filePath: string): SessionHeader | null {
       position += bytesRead;
       if (newlineIndex !== -1) {
         linesRead++;
-        if (linesRead === 2) {
-          headerLine = Buffer.concat(chunks).toString("utf8").trimEnd();
+        const line = Buffer.concat(chunks).toString("utf8").trimEnd();
+        if (linesRead === 1) {
+          firstLine = line;
+        } else {
+          headerLine = line;
         }
         chunks.length = 0;
         chunks.push(data.subarray(newlineIndex + 1));
       }
     }
 
-    // If we only found one line (old pi format: no title slot), that line is the header.
-    if (!headerLine && linesRead === 1) {
-      headerLine = Buffer.concat(chunks).toString("utf8").trimEnd();
+    // OMP: line 2 is the session header; line 1 is the title slot.
+    // pi format: line 1 is the session header (no title slot).
+    if (!headerLine && firstLine) {
+      // Exactly one line found — treat it as the header (pi format).
+      try {
+        const parsed = JSON.parse(firstLine) as Record<string, unknown>;
+        if (parsed.type === "session") {
+          headerLine = firstLine;
+        }
+      } catch { /* fall through */ }
     }
 
     if (!headerLine) return null;
