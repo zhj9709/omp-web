@@ -10,6 +10,9 @@ import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
+import { TodosPanel } from "./TodosPanel";
+import { SubagentRoster } from "./SubagentRoster";
+import { countTodos } from "@/lib/todos";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useDragDrop } from "@/hooks/useDragDrop";
@@ -277,26 +280,28 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   const {
     loading, error, messages, entryIds, streamState,
-    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelRoles, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    fastModeEnabled, fastModeActive, queueModes,
     retryInfo, contextUsage, forkingEntryId,
-    isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages,
+    isCompacting, compactError, compactResult, isHandingOff, handoffError, displayModel: displayModelValue, modelSwitching, sessionStats,
+    slashCommands, slashCommandsLoading, queuedMessages, todoPhases, setTodos,
+    subagents, subagentsUnavailable, refreshSubagents, loadSubagentTranscript,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
     isNew,
     sessionIdRef, messagesEndRef, scrollContainerRef,
-    lastUserMsgRef, promptAnchorActive,
-    handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
-    handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
+    handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleModelRoleChange,
+    handleCompact, handleHandoff, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollUserMsgToTop,
+    handleToolPresetChange, handleThinkingLevelChange, handleFastModeChange, handleQueueModeChange, loadSlashCommands, scrollUserMsgToTop,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
   });
   const sessionBusy = agentRunning || bashRunning;
+  const [todosOpen, setTodosOpen] = useState(false);
 
   useEffect(() => {
     if (!extensionDialog || soundedExtensionDialogIdRef.current === extensionDialog.id) return;
@@ -544,21 +549,29 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}
       modelList={modelList}
+      modelRoles={modelRoles}
       modelError={modelError}
-      modelScopeWarnings={modelScopeWarnings}
       onModelChange={handleModelChange}
+      onModelRoleChange={handleModelRoleChange}
       modelSwitching={modelSwitching}
       onCompact={session || isNew ? handleCompact : undefined}
       onAbortCompaction={handleAbortCompaction}
       isCompacting={isCompacting}
       compactError={compactError}
-      compactResult={compactResult}
+      onHandoff={session || isNew ? handleHandoff : undefined}
+      isHandingOff={isHandingOff}
+      handoffError={handoffError}
       toolPreset={toolPreset}
       onToolPresetChange={session || isNew ? handleToolPresetChange : undefined}
       thinkingLevel={thinkingLevel}
       onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
       availableThinkingLevels={availableThinkingLevels}
       thinkingLevelMap={currentThinkingLevelMap}
+      fastModeEnabled={fastModeEnabled}
+      fastModeActive={fastModeActive}
+      onFastModeChange={session || isNew ? handleFastModeChange : undefined}
+      queueModes={queueModes}
+      onQueueModeChange={session || isNew ? handleQueueModeChange : undefined}
       retryInfo={retryInfo}
       queuedMessages={queuedMessages}
       inputHistory={inputHistory}
@@ -661,6 +674,80 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       >
         <NoticeShelf notices={notices} floating />
       </div>
+
+      <SubagentRoster
+        subagents={subagents}
+        unavailable={subagentsUnavailable}
+        onRefresh={() => {
+          const sid = sessionIdRef.current;
+          if (sid) void refreshSubagents(sid);
+        }}
+        loadTranscript={loadSubagentTranscript}
+      />
+
+      <button
+        type="button"
+        onClick={() => setTodosOpen((open) => !open)}
+        aria-label="Toggle todos"
+        title="Todos"
+        style={{
+          position: "absolute",
+          top: 12,
+          right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
+          zIndex: 45,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 10px",
+          background: todosOpen ? "var(--bg-hover)" : "var(--bg-panel)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          color: "var(--text)",
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        <span>Todos</span>
+        {countTodos(todoPhases).total > 0 && (
+          <span
+            style={{
+              background: "var(--accent)",
+              color: "#ffffff",
+              borderRadius: 999,
+              minWidth: 18,
+              height: 18,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 11,
+              padding: "0 5px",
+            }}
+          >
+            {countTodos(todoPhases).total - countTodos(todoPhases).done}
+          </span>
+        )}
+      </button>
+
+      {todosOpen && (
+        <div
+          style={{
+            position: "absolute",
+            top: 52,
+            right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
+            zIndex: 50,
+            width: isMobile ? "calc(100% - 24px)" : 340,
+            maxHeight: "70%",
+          }}
+        >
+          <TodosPanel
+            phases={todoPhases}
+            onChange={setTodos}
+            onClose={() => setTodosOpen(false)}
+          />
+        </div>
+      )}
+
 
       {isEmptyNew ? (
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">

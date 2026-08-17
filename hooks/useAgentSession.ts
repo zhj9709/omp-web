@@ -91,6 +91,7 @@ type AgentStateResponse = {
   followUpMode?: string;
   interruptMode?: string;
   todoPhases?: unknown;
+  subagentSubscription?: { level: string | null; available: boolean };
 };
 
 export interface QueuedMessages {
@@ -332,6 +333,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [todoPhases, setTodoPhases] = useState<TodoPhase[]>([]);
   const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
+  const [subagentsUnavailable, setSubagentsUnavailable] = useState(false);
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
@@ -580,6 +582,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             }));
           }
           if (liveState.todoPhases !== undefined) setTodoPhases(normalizeTodoPhases(liveState.todoPhases));
+          if (liveState.subagentSubscription !== undefined) {
+            setSubagentsUnavailable(!liveState.subagentSubscription.available);
+          }
         } else if (!agentState.running) {
           setQueuedMessages({ steering: [], followUp: [] });
         }
@@ -1069,6 +1074,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
         if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
         if (state.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
+        if (state.subagentSubscription !== undefined) {
+          setSubagentsUnavailable(!state.subagentSubscription.available);
+        }
       }
       await finishPromptWithoutStream(sid, runId);
     } catch {
@@ -1201,6 +1209,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
               if (d.state?.extensionStatuses !== undefined) setExtensionStatuses(d.state.extensionStatuses ?? []);
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
+              if (d.state?.subagentSubscription !== undefined) {
+                setSubagentsUnavailable(!d.state.subagentSubscription.available);
+              }
               // Aborted turns can leave messages queued in pi (delivered with the
               // next turn); dead wrapper (no state) means the queue is gone.
               setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
@@ -1941,8 +1952,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       await sendAgentCommand(sid, { type: "abort_compaction" });
     } catch (e) {
       console.error("Failed to abort compaction:", e);
+      const message = e instanceof AgentCommandError && e.code === "capability_unavailable"
+        ? (e.message || "Aborting compaction is not supported in OMP RPC mode.")
+        : "Failed to abort compaction";
+      addNotice({ type: "error", message });
     }
-  }, []);
+  }, [addNotice]);
 
   const handleRecallQueue = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -2256,7 +2271,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, isHandingOff, handoffError, currentModel, displayModel, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, todoPhases, setTodos,
-    subagents, refreshSubagents, loadSubagentTranscript,
+    subagents, subagentsUnavailable, refreshSubagents, loadSubagentTranscript,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
