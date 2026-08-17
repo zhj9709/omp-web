@@ -217,8 +217,8 @@ export class OmpRpcClient {
     if (this._alive) return;
 
     const env = { ...process.env };
-    delete env.PI_WEB_PORT;
-    delete env.PI_WEB_MODE;
+    delete env.OMP_WEB_PORT;
+    delete env.OMP_WEB_MODE;
     for (const [k, v] of Object.entries(this.options.env)) {
       if (v === undefined) delete env[k];
       else env[k] = v;
