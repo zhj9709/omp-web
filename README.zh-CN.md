@@ -2,11 +2,11 @@
 
 [English](./README.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
 
-[pi 编程智能体](https://github.com/earendil-works/pi)的本地浏览器界面。OMP Web 与 pi 共用本机配置和会话文件，可在浏览器中查找和继续对话、运行智能体、配置模型与资源，并查看项目文件。
+OMP 编程智能体的本地浏览器界面。OMP Web 与 OMP 共用本机配置和会话文件，可在浏览器中查找和继续对话、运行智能体、配置模型与资源，并查看项目文件。
 
 中文微信群：请查看 [GitHub Discussions 帖子](https://github.com/agegr/omp-web/discussions/271)。
 
-![OMP Web 展示包含结构化 Markdown、工具调用和项目导航的 pi 会话](https://raw.githubusercontent.com/agegr/omp-web/main/docs/screenshot2.png)
+![OMP Web 展示包含结构化 Markdown、工具调用和项目导航的 OMP 会话](https://raw.githubusercontent.com/agegr/omp-web/main/docs/screenshot2.png)
 
 ## 功能
 
@@ -48,7 +48,7 @@ omp-web
 | `--hostname <主机>`、`-H <主机>` 或 `OMP_WEB_HOSTNAME` | 监听主机名 | `127.0.0.1` |
 | `--no-open` 或 `OMP_WEB_NO_OPEN=1` | 不自动打开浏览器 | 自动打开 |
 | `OMP_WEB_ALLOWED_HOSTS` | 额外允许的代理或自定义主机名，多个值用逗号分隔，必须精确匹配 | 未设置 |
-| `OMP_WEB_PASSWORD` | 启用 HTTP Basic Auth，用户名固定为 `pi` | 不启用认证 |
+| `OMP_WEB_PASSWORD` | 启用 HTTP Basic Auth，用户名固定为 `omp` | 不启用认证 |
 
 例如：
 
@@ -90,9 +90,9 @@ npx @agegr/omp-web@latest
 
 ## 注意事项
 
-- **智能体数据**：OMP Web 默认读取 `~/.pi/agent` 下的 pi 数据，包括 `sessions/<编码后的工作目录>/<时间戳>_<uuid>.jsonl` 中的会话文件。可通过 `PI_CODING_AGENT_DIR` 指定其他 pi agent 目录。
-- **文件系统访问**：OMP Web 必须能读取智能体数据目录及会话记录中的工作目录。与现有 pi 会话共用数据时，请让 OMP Web 运行在与 pi 相同的文件系统环境中。
-- **共享配置**：模型面板使用 pi 的模型、设置和凭据存储，因此两种界面都能看到相关更改。
+- **智能体数据**：OMP Web 读取 `~/.omp/agent` 下的 OMP 数据，包括 `sessions/<编码后的工作目录>/<时间戳>_<uuid>.jsonl` 中的会话文件。
+- **文件系统访问**：OMP Web 必须能读取智能体数据目录及会话记录中的工作目录。与现有 OMP 会话共用数据时，请让 OMP Web 运行在与 OMP 相同的文件系统环境中。
+- **共享配置**：模型面板使用 OMP 的模型、设置和凭据存储，因此两种界面都能看到相关更改。
 - **文件访问边界**：文件浏览器仅能访问在 OMP Web 中选择过的工作目录，以及它已识别的项目或会话根目录；它不是通用的文件系统浏览器。
 - **Git worktree**：切换器何时显示、如何创建 worktree，以及删除会产生什么影响，见 [OMP Web 里的 Worktree](./docs/worktrees.zh-CN.md)。
 

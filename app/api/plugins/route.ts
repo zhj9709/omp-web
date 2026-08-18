@@ -1,26 +1,18 @@
 import { NextResponse } from "next/server";
-import { existsSync, readFileSync, statSync } from "fs";
-import { basename, dirname, extname, join, relative } from "path";
-import {
-  DefaultPackageManager,
-  getAgentDir,
-  SettingsManager,
-  type PackageSource,
-  type ResolvedPaths,
-  type ResolvedResource,
-} from "@earendil-works/pi-coding-agent";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { getProjectTrustStatus } from "@/lib/project-trust";
 import type {
   PluginDiagnostic,
   PluginPackageInfo,
   PluginResourceCounts,
   PluginResourceInfo,
-  PluginResourceKind,
   PluginScope,
   PluginsResponse,
 } from "@/lib/api-types";
+
+const execFileAsync = promisify(execFile);
 
 export const dynamic = "force-dynamic";
 
@@ -30,205 +22,87 @@ function emptyCounts(): PluginResourceCounts {
   return { extensions: 0, skills: 0, prompts: 0, themes: 0 };
 }
 
-function toPluginScope(scope: string): PluginScope {
-  return scope === "project" ? "project" : "global";
+/**
+ * OMP plugin list output (omp plugin list --json):
+ *   { npm: [...], marketplace: [...] }
+ * Each entry: { name: string, version?: string, path?: string, ... }
+ */
+interface OmpPluginEntry {
+  name: string;
+  version?: string;
+  path?: string;
+  description?: string;
+  enabled?: boolean;
 }
 
-function keyFor(source: string, scope: PluginScope): string {
-  return `${scope}\0${source}`;
+interface OmpPluginListOutput {
+  npm: OmpPluginEntry[];
+  marketplace: OmpPluginEntry[];
 }
 
-function getPackageSource(entry: PackageSource): string {
-  return typeof entry === "string" ? entry : entry.source;
+async function getOmpBinary(): Promise<string> {
+  return process.env.OMP_BINARY ?? "omp";
 }
 
-function isDisabledPackage(entry: PackageSource): boolean {
-  if (typeof entry === "string") return false;
-  return (
-    Array.isArray(entry.extensions) && entry.extensions.length === 0 &&
-    Array.isArray(entry.skills) && entry.skills.length === 0 &&
-    Array.isArray(entry.prompts) && entry.prompts.length === 0 &&
-    Array.isArray(entry.themes) && entry.themes.length === 0
-  );
-}
-
-function getDisabledPackages(settingsManager: SettingsManager): Map<string, boolean> {
-  const disabled = new Map<string, boolean>();
-  for (const entry of settingsManager.getGlobalSettings().packages ?? []) {
-    disabled.set(keyFor(getPackageSource(entry), "global"), isDisabledPackage(entry));
-  }
-  for (const entry of settingsManager.getProjectSettings().packages ?? []) {
-    disabled.set(keyFor(getPackageSource(entry), "project"), isDisabledPackage(entry));
-  }
-  return disabled;
-}
-
-function setPackageDisabled(
-  settingsManager: SettingsManager,
-  source: string,
-  scope: PluginScope,
-  disabled: boolean,
-): boolean {
-  const current = scope === "project"
-    ? settingsManager.getProjectSettings().packages ?? []
-    : settingsManager.getGlobalSettings().packages ?? [];
-  let changed = false;
-  const next = current.map((entry): PackageSource => {
-    if (getPackageSource(entry) !== source) return entry;
-    changed = true;
-    if (disabled) {
-      return {
-        ...(typeof entry === "string" ? { source: entry } : entry),
-        extensions: [],
-        skills: [],
-        prompts: [],
-        themes: [],
-      };
-    }
-    return getPackageSource(entry);
-  });
-  if (!changed) return false;
-  if (scope === "project") settingsManager.setProjectPackages(next);
-  else settingsManager.setPackages(next);
-  return true;
-}
-
-function addCount(counts: PluginResourceCounts, kind: keyof PluginResourceCounts): void {
-  counts[kind] += 1;
-}
-
-function getResourceName(path: string, kind: PluginResourceKind): string {
-  const file = basename(path);
-  const ext = extname(file);
-  if (kind === "skill" && file.toLowerCase() === "skill.md") return basename(dirname(path));
-  if ((kind === "extension" || kind === "theme" || kind === "prompt") && ext) {
-    if (kind === "extension" && /^index\.(ts|js)$/.test(file)) return basename(dirname(path));
-    return file.slice(0, -ext.length);
-  }
-  return file;
-}
-
-function getRelativePath(resource: ResolvedResource): string {
-  const baseDir = resource.metadata.baseDir;
-  if (!baseDir) return resource.path;
-  const rel = relative(baseDir, resource.path);
-  return rel && !rel.startsWith("..") ? rel : resource.path;
-}
-
-function getConfiguredVersion(source: string): string | undefined {
-  const npmSpec = source.startsWith("npm:") ? source.slice(4) : undefined;
-  if (npmSpec) {
-    const lastAt = npmSpec.lastIndexOf("@");
-    const packageNameEnd = npmSpec.startsWith("@") ? npmSpec.indexOf("/", 1) : 0;
-    if (lastAt > packageNameEnd) return npmSpec.slice(lastAt + 1) || undefined;
-    return undefined;
-  }
-
-  if (source.startsWith("git:") || /^[a-z]+:\/\//.test(source)) {
-    const lastAt = source.lastIndexOf("@");
-    const lastSlash = source.lastIndexOf("/");
-    const lastColon = source.lastIndexOf(":");
-    if (lastAt > Math.max(lastSlash, lastColon)) return source.slice(lastAt + 1) || undefined;
-  }
-  return undefined;
-}
-
-function readPackageMetadata(installedPath?: string): { packageName?: string; version?: string } {
-  if (!installedPath) return {};
-  try {
-    const stats = statSync(installedPath);
-    const packageJsonPath = stats.isDirectory()
-      ? join(installedPath, "package.json")
-      : join(dirname(installedPath), "package.json");
-    if (!existsSync(packageJsonPath)) return {};
-    const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
-      name?: unknown;
-      version?: unknown;
-    };
-    return {
-      packageName: typeof parsed.name === "string" ? parsed.name : undefined,
-      version: typeof parsed.version === "string" ? parsed.version : undefined,
-    };
-  } catch {
-    return {};
-  }
-}
-
-function collectResource(
-  resource: ResolvedResource,
-  kind: keyof PluginResourceCounts,
-  countsByPackage: Map<string, PluginResourceCounts>,
-  resourcesByPackage: Map<string, PluginResourceInfo[]>,
-  totals: PluginResourceCounts,
-): void {
-  if (!resource.enabled || resource.metadata.origin !== "package") return;
-  const source = resource.metadata.source;
-  const scope = toPluginScope(resource.metadata.scope);
-  const key = keyFor(source, scope);
-  const counts = countsByPackage.get(key) ?? emptyCounts();
-  addCount(counts, kind);
-  addCount(totals, kind);
-  countsByPackage.set(key, counts);
-  const resources = resourcesByPackage.get(key) ?? [];
-  const resourceKind = kind === "extensions"
-    ? "extension"
-    : kind === "skills"
-      ? "skill"
-      : kind === "prompts"
-        ? "prompt"
-        : "theme";
-  resources.push({
-    kind: resourceKind,
-    name: getResourceName(resource.path, resourceKind),
-    path: resource.path,
-    relativePath: getRelativePath(resource),
-  });
-  resourcesByPackage.set(key, resources);
-}
-
-function collectResources(paths: ResolvedPaths): {
-  countsByPackage: Map<string, PluginResourceCounts>;
-  resourcesByPackage: Map<string, PluginResourceInfo[]>;
-  totals: PluginResourceCounts;
-} {
-  const countsByPackage = new Map<string, PluginResourceCounts>();
-  const resourcesByPackage = new Map<string, PluginResourceInfo[]>();
-  const totals = emptyCounts();
-  for (const resource of paths.extensions) collectResource(resource, "extensions", countsByPackage, resourcesByPackage, totals);
-  for (const resource of paths.skills) collectResource(resource, "skills", countsByPackage, resourcesByPackage, totals);
-  for (const resource of paths.prompts) collectResource(resource, "prompts", countsByPackage, resourcesByPackage, totals);
-  for (const resource of paths.themes) collectResource(resource, "themes", countsByPackage, resourcesByPackage, totals);
-  return { countsByPackage, resourcesByPackage, totals };
-}
-
+/**
+ * Read plugins via `omp plugin list --json`.
+ * Maps OMP's flat plugin list to the PluginsResponse format.
+ */
 async function readPlugins(cwd: string): Promise<PluginsResponse> {
-  const agentDir = getAgentDir();
-  const projectTrust = getProjectTrustStatus(cwd, agentDir);
-  const settingsManager = SettingsManager.create(cwd, agentDir, {
-    projectTrusted: projectTrust.trusted,
-  });
-  const packageManager = new DefaultPackageManager({
-    cwd,
-    agentDir,
-    settingsManager,
-  });
-
+  const ompBin = await getOmpBinary();
   const diagnostics: PluginDiagnostic[] = [];
-  let countsByPackage = new Map<string, PluginResourceCounts>();
-  let resourcesByPackage = new Map<string, PluginResourceInfo[]>();
-  let totals = emptyCounts();
-  const disabledByPackage = getDisabledPackages(settingsManager);
+  const packages: PluginPackageInfo[] = [];
+  const totals = emptyCounts();
 
   try {
-    const resolved = await packageManager.resolve(async (source) => {
-      diagnostics.push({
-        type: "warning",
-        source,
-        message: "Package is configured but not installed yet.",
-      });
-      return "skip";
+    const { stdout } = await execFileAsync(ompBin, ["plugin", "list", "--json"], {
+      cwd,
+      timeout: 30_000,
+      env: { ...process.env },
     });
-    ({ countsByPackage, resourcesByPackage, totals } = collectResources(resolved));
+
+    let data: OmpPluginListOutput;
+    try {
+      data = JSON.parse(stdout) as OmpPluginListOutput;
+    } catch {
+      diagnostics.push({
+        type: "error",
+        message: "Failed to parse omp plugin list output",
+      });
+      return { packages, totals, diagnostics, projectResourcesLoaded: true };
+    }
+
+    const allEntries = [...(data.npm ?? []), ...(data.marketplace ?? [])];
+
+    for (const entry of allEntries) {
+      const scope: PluginScope = entry.path && entry.path.startsWith(cwd)
+        ? "project"
+        : "global";
+      const counts = emptyCounts();
+      const resources: PluginResourceInfo[] = [];
+
+      // Note: `omp plugin list --json` does not enumerate individual
+      // resources (extensions, skills, prompts, themes) per plugin.
+      // We report the plugin as loaded but without resource breakdown.
+
+      packages.push({
+        source: entry.name,
+        scope,
+        filtered: false,
+        disabled: entry.enabled === false,
+        installedPath: entry.path,
+        packageName: entry.name,
+        version: entry.version,
+        configuredVersion: undefined,
+        counts,
+        resources,
+        status: entry.enabled === false
+          ? "disabled"
+          : entry.path
+            ? "loaded"
+            : "missing",
+      });
+    }
   } catch (error) {
     diagnostics.push({
       type: "error",
@@ -236,48 +110,16 @@ async function readPlugins(cwd: string): Promise<PluginsResponse> {
     });
   }
 
-  const packages = packageManager.listConfiguredPackages().map((pkg) => {
-    const scope = toPluginScope(pkg.scope);
-    const key = keyFor(pkg.source, scope);
-    const disabled = disabledByPackage.get(key) ?? false;
-    const counts = countsByPackage.get(key) ?? emptyCounts();
-    const resources = resourcesByPackage.get(key) ?? [];
-    const resourceCount = counts.extensions + counts.skills + counts.prompts + counts.themes;
-    const packageMetadata = readPackageMetadata(pkg.installedPath);
-    if (!pkg.installedPath) {
-      diagnostics.push({
-        type: "warning",
-        source: pkg.source,
-        message: "Configured package path was not found.",
-      });
-    }
-    return {
-      source: pkg.source,
-      scope,
-      filtered: pkg.filtered,
-      disabled,
-      installedPath: pkg.installedPath,
-      packageName: packageMetadata.packageName,
-      version: packageMetadata.version,
-      configuredVersion: getConfiguredVersion(pkg.source),
-      counts,
-      resources,
-      status: disabled ? "disabled" : resourceCount > 0 ? "loaded" : pkg.installedPath ? "installed" : "missing",
-    } satisfies PluginPackageInfo;
-  });
-
-  return {
-    packages,
-    totals,
-    diagnostics,
-    projectResourcesLoaded: projectTrust.trusted,
-  };
+  return { packages, totals, diagnostics, projectResourcesLoaded: true };
 }
 
-function readScope(scope: unknown): PluginScope {
-  return scope === "project" ? "project" : "global";
-}
-
+/**
+ * GET /api/plugins?cwd=<path>
+ *
+ * Returns installed plugins via `omp plugin list --json`.
+ * OMP v17.3.5 does not return per-plugin resource counts (extensions, skills,
+ * prompts, themes); those fields are populated as empty.
+ */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const cwd = searchParams.get("cwd");
@@ -294,7 +136,14 @@ export async function GET(req: Request) {
   }
 }
 
-// POST /api/plugins body: { action, source?, scope?, cwd }
+/**
+ * POST /api/plugins body: { action, source?, scope?, cwd }
+ *
+ * Plugin management via `omp plugin <action>` CLI.
+ * Supported actions: install, remove, enable, disable.
+ * "update" is feature_unavailable: omp plugin upgrade exists but requires
+ * interactive prompts; safe batch operation is not guaranteed.
+ */
 export async function POST(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
@@ -317,48 +166,74 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    const agentDir = getAgentDir();
-    const projectTrust = getProjectTrustStatus(body.cwd, agentDir);
-    const settingsManager = SettingsManager.create(body.cwd, agentDir, {
-      projectTrusted: projectTrust.trusted,
-    });
-    const scope = readScope(body.scope);
-    if (scope === "project" && !projectTrust.trusted) {
-      return NextResponse.json(
-        { error: "Project resources must be trusted before modifying project plugins" },
-        { status: 403 },
-      );
-    }
-    const packageManager = new DefaultPackageManager({
-      cwd: body.cwd,
-      agentDir,
-      settingsManager,
-    });
+    const ompBin = await getOmpBinary();
     const source = body.source?.trim();
-    const local = scope === "project";
+    const scope = body.scope === "project" ? "--scope=project" : "";
 
-    if (body.action === "install") {
-      if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
-      await packageManager.installAndPersist(source, { local });
-    } else if (body.action === "remove") {
-      if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
-      await packageManager.removeAndPersist(source, { local });
-    } else if (body.action === "update") {
-      await packageManager.update(source);
-    } else if (body.action === "disable") {
-      if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
-      setPackageDisabled(settingsManager, source, scope, true);
-      await settingsManager.flush();
-    } else if (body.action === "enable") {
-      if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
-      setPackageDisabled(settingsManager, source, scope, false);
-      await settingsManager.flush();
-    } else {
-      return NextResponse.json({ error: `Unsupported action: ${body.action}` }, { status: 400 });
+    switch (body.action) {
+      case "install": {
+        if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
+        const args = ["plugin", "install", source];
+        if (scope) args.push(scope);
+        await execFileAsync(ompBin, args, {
+          cwd: body.cwd,
+          timeout: 60_000,
+          env: { ...process.env },
+        });
+        break;
+      }
+      case "remove": {
+        if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
+        const args = ["plugin", "uninstall", source];
+        if (scope) args.push(scope);
+        await execFileAsync(ompBin, args, {
+          cwd: body.cwd,
+          timeout: 60_000,
+          env: { ...process.env },
+        });
+        break;
+      }
+      case "enable": {
+        if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
+        await execFileAsync(ompBin, ["plugin", "enable", source], {
+          cwd: body.cwd,
+          timeout: 30_000,
+          env: { ...process.env },
+        });
+        break;
+      }
+      case "disable": {
+        if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
+        await execFileAsync(ompBin, ["plugin", "disable", source], {
+          cwd: body.cwd,
+          timeout: 30_000,
+          env: { ...process.env },
+        });
+        break;
+      }
+      case "update": {
+        return NextResponse.json(
+          {
+            error: "feature_unavailable",
+            message: "OMP plugin upgrade may require interactive prompts. " +
+              "Use `omp plugin upgrade` from the terminal.",
+          },
+          { status: 501 },
+        );
+      }
+      default: {
+        return NextResponse.json(
+          { error: `Unsupported action: ${body.action}` },
+          { status: 400 },
+        );
+      }
     }
 
     return NextResponse.json(await readPlugins(body.cwd));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
   }
 }

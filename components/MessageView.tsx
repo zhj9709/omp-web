@@ -5,6 +5,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { ImagePreview } from "./ImagePreview";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
+import { useTypewriterText } from "@/hooks/useTypewriterText";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
@@ -26,8 +27,12 @@ import type {
   ThinkingContent,
 } from "@/lib/types";
 
-// CJK chars ~1 token each (GLM/DeepSeek/GPT-o200k); other chars ~4 chars/token.
+// CJK chars ~0.6 token each (DeepSeek/GLM/Qwen tokenizers merge common bigrams:
+// measured 0.55-0.7 on Mandarin prose); other chars ~4 chars/token (0.25).
+// The old 1.0/char coefficient over-counted Chinese ~1.7x, which made the
+// streamed t/s badge read implausibly fast.
 const CJK_PATTERN = /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\u{20000}-\u{2fa1f}\uac00-\ud7af]/u;
+const CJK_TOKENS_PER_CHAR = 0.6;
 function estimateTokens(text: string): number {
   let cjk = 0;
   let rest = 0;
@@ -35,7 +40,7 @@ function estimateTokens(text: string): number {
     if (CJK_PATTERN.test(ch)) cjk++;
     else rest++;
   }
-  return cjk + rest / 4;
+  return cjk * CJK_TOKENS_PER_CHAR + rest / 4;
 }
 
 interface TokenEstimateCacheEntry {
@@ -77,13 +82,12 @@ function estimateUpdatedTokens(previous: TokenEstimateCacheEntry | undefined, te
   return baseTokens + estimateTokens(text.slice(suffixStart));
 }
 
-const MAX_THINKING_CACHE_ENTRIES = 100;
-const thinkingContentCache = new Map<string, Promise<string>>();
-
 // Messages larger than this skip markdown rendering entirely. react-markdown +
 // KaTeX + syntax highlighting on multi-hundred-KB payloads (e.g. pasted HAR or
 // log dumps) freezes the browser main thread.
 const MAX_MARKDOWN_CHARS = 100_000;
+const MAX_THINKING_CACHE_ENTRIES = 100;
+const thinkingContentCache = new Map<string, Promise<string>>();
 
 function formatMessageBytes(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} MB`;
@@ -99,6 +103,12 @@ function SafeMarkdownBody({ children, className, ...props }: React.ComponentProp
   const { t } = useI18n();
   const [showRaw, setShowRaw] = useState(false);
 
+  // NOTE: an earlier revision deferred the markdown parse behind
+  // useTransition here. Calling setState during render on every prop change
+  // made React re-render in a loop, starving the typewriter's rAF loop and
+  // turning streamed text into ~200ms chunked jumps. The stream-end parse
+  // cost is accepted (a one-off 100-200ms on the final message), or handled
+  // at the MarkdownBody layer (plain-text while streaming, as TextBlock does).
   if (children.length <= MAX_MARKDOWN_CHARS) {
     return <MarkdownBody className={className} {...props}>{children}</MarkdownBody>;
   }
@@ -597,6 +607,21 @@ function AssistantMessageView({
     .map((block, originalIndex) => ({ block, originalIndex }))
     .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming })), [message.content, isStreaming]);
   const blocks = useMemo(() => blockItems.map(({ block }) => block), [blockItems]);
+  // Stable block key base: entryId appears only after the session file is
+  // re-read following stream completion. Adopting it immediately would remount
+  // every block (resetting e.g. thinking expansion). Keep the initial base
+  // until a genuinely different persisted message occupies this slot.
+  const blockKeyBaseRef = useRef<string>("stream");
+  const prevEntryIdRef = useRef<string | undefined>(undefined);
+  let blockKeyBase = blockKeyBaseRef.current;
+  if (entryId !== undefined) {
+    if (prevEntryIdRef.current !== undefined && prevEntryIdRef.current !== entryId) {
+      blockKeyBase = entryId;
+      blockKeyBaseRef.current = blockKeyBase;
+    }
+    prevEntryIdRef.current = entryId;
+  }
+
   const providerError = getAssistantErrorMessage(message, { isStreaming });
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -705,13 +730,26 @@ function AssistantMessageView({
         return changed ? next : prev;
       });
 
+      // Cumulative average tps: total estimated tokens divided by elapsed
+      // time since the first token arrived. The upstream delivers text in
+      // waves (0ms intra-wave, 60-400ms gaps), so any short-window rate
+      // (100ms/1.5s) spikes to thousands during a wave and collapses in the
+      // gaps — reading as a fake "2000+ t/s" that刷新 in lurches. The
+      // cumulative average converges to the true sustained rate and moves
+      // smoothly by construction (monotone time, monotone tokens).
       const tokens = estimatedTokensRef.current;
       if (tokens === 0) return;
-      if (streamStartRef.current === null) streamStartRef.current = now;
-      const elapsed = (now - streamStartRef.current) / 1000;
-      if (elapsed > 0.5) setTps(tokens / elapsed);
+      if (streamStartRef.current === null) {
+        streamStartRef.current = now;
+        return;
+      }
+      const elapsedSec = (now - streamStartRef.current) / 1000;
+      if (elapsedSec <= 0.5) return; // warm-up gate
+      const cumulativeTps = tokens / elapsedSec;
+      // Light exponential smoothing purely for display aesthetics.
+      setTps((prev) => (prev === null ? cumulativeTps : prev * 0.7 + cumulativeTps * 0.3));
     };
-    const id = setInterval(tick, 300);
+    const id = setInterval(tick, 100);
     return () => clearInterval(id);
   }, [isStreaming]);
 
@@ -767,7 +805,7 @@ function AssistantMessageView({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {blockItems.map(({ block, originalIndex }) => (
-          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
+          <BlockView key={`${blockKeyBase}-${originalIndex}`} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>
 
@@ -850,7 +888,7 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
     return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
   }
   if (block.type === "thinking") {
-    return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} />;
+    return <ThinkingBlock block={block as ThinkingContent} isStreaming={isStreaming} duration={streamingDuration} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} />;
   }
   if (block.type === "toolCall") {
     const tc = block as ToolCallContent;
@@ -862,11 +900,36 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
 }
 
 function TextBlock({ block, isStreaming, cwd, onOpenFile }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string) => void }) {
+  // While the assistant is still streaming, render plain text with preserved
+  // whitespace. Running react-markdown + KaTeX + syntax highlighting on every
+  // token frame re-parses the full message and freezes the main thread on long
+  // replies. Markdown rendering is deferred until the stream completes.
+  //
+  // The typewriter buffer additionally smooths the display: raw deltas arrive
+  // in uneven bursts, and revealing them one step per animation frame reads
+  // as a continuous character stream instead of per-chunk jumps.
+  const displayText = useTypewriterText(block.text, Boolean(isStreaming));
+  if (isStreaming) {
+    return (
+      <div
+        style={{
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          overflowWrap: "anywhere",
+          minWidth: 0,
+          maxWidth: "100%",
+        }}
+      >
+        {displayText}
+      </div>
+    );
+  }
   return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile}>{block.text}</SafeMarkdownBody>;
 }
 
-function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
+function ThinkingBlock({ block, isStreaming, duration, sessionId, entryId, blockIndex }: {
   block: ThinkingContent;
+  isStreaming?: boolean;
   duration?: number;
   sessionId?: string;
   entryId?: string;
@@ -877,6 +940,10 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The reasoning stream is just as bursty as the answer text — buffer it
+  // through the typewriter so an expanded thinking block reveals smoothly
+  // instead of popping in one chunk.
+  const thinkingText = useTypewriterText(block.thinking, Boolean(isStreaming));
 
   const toggle = async () => {
     const nextExpanded = !expanded;
@@ -940,7 +1007,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
             borderTop: "1px solid var(--border)",
           }}
         >
-           {loading ? t("i18n.loadingThinking") : error ?? (block.deferred ? content : block.thinking)}
+           {loading ? t("i18n.loadingThinking") : error ?? (block.deferred ? content : thinkingText)}
         </div>
       )}
     </div>

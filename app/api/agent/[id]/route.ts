@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
-import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
+import { startRpcSession, getRpcSession, CapabilityUnavailableError } from "@/lib/rpc-manager";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -39,12 +39,14 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    const isCapabilityUnavailable = error instanceof CapabilityUnavailableError;
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
+      ...(isCapabilityUnavailable ? { code: "capability_unavailable" } : {}),
       ...(commandType === "prompt" && !promptAccepted
         ? { code: "prompt_rejected", accepted: false }
         : {}),
-    }, { status: 500 });
+    }, { status: isCapabilityUnavailable ? 422 : 500 });
   }
 }
 

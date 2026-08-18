@@ -24,8 +24,12 @@ function playTone(ctx: AudioContext) {
 export function useAudio() {
   const [enabled, setEnabled] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
-    const stored = localStorage.getItem("omp-sound-enabled");
-    return stored === null ? true : stored === "true";
+    try {
+      const stored = localStorage.getItem("omp-sound-enabled");
+      return stored === null ? true : stored === "true";
+    } catch {
+      return true;
+    }
   });
 
   const enabledRef = useRef(enabled);
@@ -51,12 +55,15 @@ export function useAudio() {
     if (!ctx || ctx.state !== "suspended") return;
     ctx.resume().catch(() => {});
   }, [getCtx]);
-
   const toggle = useCallback(() => {
     const next = !enabledRef.current;
     if (next) unlockAudio(true);
     enabledRef.current = next;
-    localStorage.setItem("omp-sound-enabled", String(next));
+    try {
+      localStorage.setItem("omp-sound-enabled", String(next));
+    } catch {
+      // ignore storage errors (private mode, quota, etc.)
+    }
     setEnabled(next);
   }, [unlockAudio]);
 

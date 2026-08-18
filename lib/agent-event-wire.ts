@@ -1,27 +1,31 @@
-import type { JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+// Event wire types and transformation — no SDK dependency.
 
 export interface AgentEventLike {
   type: string;
   [key: string]: unknown;
 }
 
-type JsonMessageUpdateEvent = Extract<
-  JsonAgentSessionEvent,
-  { type: "message_update" }
->;
+/** Generic assistant message event (text_delta, thinking_delta, toolcall_start, toolcall_delta, etc.) */
+export interface ClientAssistantMessageEvent {
+  type: string;
+  id?: string;
+  toolName?: string;
+  contentIndex: number;
+  content: string;
+  toolCall: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+  [key: string]: unknown;
+}
 
-type JsonAssistantMessageEvent = JsonMessageUpdateEvent["assistantMessageEvent"];
-type JsonToolCallStartEvent = Extract<JsonAssistantMessageEvent, { type: "toolcall_start" }>;
-type JsonToolCallDeltaEvent = Extract<JsonAssistantMessageEvent, { type: "toolcall_delta" }>;
-
-export type ClientAssistantMessageEvent =
-  | Exclude<JsonAssistantMessageEvent, { type: "toolcall_start" | "toolcall_delta" }>
-  | (JsonToolCallStartEvent & { id?: string; toolName?: string })
-  | (JsonToolCallDeltaEvent & { id?: string; toolName?: string });
-
-export type ClientMessageUpdateEvent = Omit<JsonMessageUpdateEvent, "assistantMessageEvent"> & {
+export interface ClientMessageUpdateEvent {
+  type: "message_update";
   assistantMessageEvent: ClientAssistantMessageEvent;
-};
+  message?: unknown;
+  [key: string]: unknown;
+}
 
 const OMITTED_EVENT_TYPES = new Set([
   "turn_start",
@@ -40,8 +44,14 @@ function toolCallMetadata(
     || !isObject(event.partial)
   ) return null;
   const content = event.partial.content;
-  const contentIndex = event.contentIndex;
-  if (!Array.isArray(content) || typeof contentIndex !== "number") return null;
+  // OMP sends contentIndex as string ("0", "1"); normalize before indexing,
+  // mirroring the projection in toClientAgentEvent. A non-integer index (or a
+  // string that fails to parse) means no metadata can be extracted.
+  const rawIndex = event.contentIndex;
+  const contentIndex = typeof rawIndex === "string"
+    ? parseInt(rawIndex, 10)
+    : (typeof rawIndex === "number" ? rawIndex : Number.NaN);
+  if (!Array.isArray(content) || !Number.isInteger(contentIndex)) return null;
 
   const block = content[contentIndex];
   if (!isObject(block) || block.type !== "toolCall") return null;
@@ -52,6 +62,20 @@ function toolCallMetadata(
     ? block.name
     : (typeof block.toolName === "string" ? block.toolName : null);
   return id !== null && toolName !== null ? { id, toolName } : null;
+}
+
+/** Reduce a `ttsr_triggered` rules array to just rule names for the wire. */
+function ttsrRuleNames(rules: unknown): string[] {
+  if (!Array.isArray(rules)) return [];
+  const names: string[] = [];
+  for (const rule of rules) {
+    if (isObject(rule) && typeof rule.name === "string" && rule.name) {
+      names.push(rule.name);
+    } else if (typeof rule === "string" && rule) {
+      names.push(rule);
+    }
+  }
+  return names;
 }
 
 /** Apply omp-web's event filters plus Pi 0.84's message_update projection. */
@@ -68,10 +92,19 @@ export function toClientAgentEvent(
       || Array.isArray(assistantMessageEvent)
     ) return null;
 
+    // OMP sends contentIndex as string ("0", "1"); normalize to number
+    const rawEvent = assistantMessageEvent as Record<string, unknown>;
+    const contentIndex = typeof rawEvent.contentIndex === "string"
+      ? parseInt(rawEvent.contentIndex, 10)
+      : (rawEvent.contentIndex as number | undefined);
+
     if (!("partial" in assistantMessageEvent)) {
       return {
         type: "message_update",
-        assistantMessageEvent,
+        assistantMessageEvent: {
+          ...assistantMessageEvent,
+          contentIndex: Number.isInteger(contentIndex) ? contentIndex : 0,
+        },
       } as ClientMessageUpdateEvent;
     }
 
@@ -80,7 +113,11 @@ export function toClientAgentEvent(
     void _partial;
     return {
       type: "message_update",
-      assistantMessageEvent: metadata ? { ...deltaEvent, ...metadata } : deltaEvent,
+      assistantMessageEvent: {
+        ...deltaEvent,
+        contentIndex: Number.isInteger(contentIndex) ? contentIndex : 0,
+        ...(metadata ? metadata : {}),
+      },
     } as ClientMessageUpdateEvent;
   }
 
@@ -94,6 +131,9 @@ export function toClientAgentEvent(
   }
 
   if (event.type === "agent_end") return { type: "agent_end" };
+  if (event.type === "ttsr_triggered") {
+    return { type: "ttsr_triggered", rules: ttsrRuleNames(event.rules) };
+  }
   return event;
 }
 

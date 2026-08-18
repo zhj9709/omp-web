@@ -850,6 +850,7 @@ function ModelDetail({
   const costDraftRef = useRef(costDraft);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const catalogRequestIdRef = useRef(0);
+  const testRequestIdRef = useRef(0);
   const catalogUndoRef = useRef<ModelEntry | null>(null);
   const costTemplateRef = useRef(model.cost);
   const set = <K extends keyof ModelEntry>(k: K, v: ModelEntry[K]) => onChange({ ...model, [k]: v });
@@ -892,6 +893,7 @@ function ModelDetail({
   })();
 
   useEffect(() => {
+    testRequestIdRef.current += 1;
     setTestState({ phase: "idle" });
   }, [providerName, provider.baseUrl, provider.api, provider.apiKey, model.id, model.api]);
 
@@ -903,6 +905,7 @@ function ModelDetail({
 
   const handleTest = useCallback(async () => {
     if (!model.id.trim() || testState.phase === "testing") return;
+    const requestId = ++testRequestIdRef.current;
     setTestState({ phase: "testing" });
     try {
       const res = await fetch("/api/models-config/test", {
@@ -917,6 +920,7 @@ function ModelDetail({
         status?: number;
         responseText?: string;
       };
+      if (requestId !== testRequestIdRef.current) return;
       if (!res.ok || !d.ok) {
         setTestState({
           phase: "error",
@@ -933,6 +937,7 @@ function ModelDetail({
         responseText: d.responseText,
       });
     } catch (e) {
+      if (requestId !== testRequestIdRef.current) return;
       setTestState({ phase: "error", message: e instanceof Error ? e.message : String(e) });
     }
   }, [model, provider, providerName, testState.phase]);
@@ -1400,9 +1405,18 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
   }, [provider.id, onRefresh]);
 
   const handleLogout = useCallback(async () => {
-    await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
-    setLoginState({ phase: "idle" });
-    onRefresh();
+    try {
+      const res = await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        setLoginState({ phase: "error", message: d.error ?? `HTTP ${res.status}` });
+        return;
+      }
+      setLoginState({ phase: "idle" });
+      onRefresh();
+    } catch (e) {
+      setLoginState({ phase: "error", message: e instanceof Error ? e.message : String(e) });
+    }
   }, [provider.id, onRefresh]);
 
   const submitCode = useCallback(async (token: string, code: string) => {
@@ -1906,20 +1920,30 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
 
   const loadOAuthProviders = useCallback(() => {
     fetch("/api/auth/providers")
-      .then((r) => r.json())
-      .then((d: { providers?: OAuthProvider[] }) => {
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<{ providers?: OAuthProvider[] }>;
+      })
+      .then((d) => {
         if (Array.isArray(d.providers)) setOauthProviders(d.providers);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        setSaveError(err instanceof Error ? err.message : String(err));
+      });
   }, []);
 
   const loadApiKeyProviders = useCallback(() => {
     fetch("/api/auth/all-providers")
-      .then((r) => r.json())
-      .then((d: { providers?: ApiKeyProvider[] }) => {
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<{ providers?: ApiKeyProvider[] }>;
+      })
+      .then((d) => {
         if (Array.isArray(d.providers)) setApiKeyProviders(d.providers);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        setSaveError(err instanceof Error ? err.message : String(err));
+      });
   }, []);
 
   // A dual-auth provider moves between the two lists when its credential type
@@ -1958,6 +1982,9 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
   }, []);
 
   const renameProvider = useCallback((oldName: string, newName: string) => {
+    if (newName !== oldName && Object.prototype.hasOwnProperty.call(config.providers ?? {}, newName)) {
+      return;
+    }
     setConfig((prev) => {
       const entries = Object.entries(prev.providers ?? {});
       const idx = entries.findIndex(([k]) => k === oldName);
@@ -1971,7 +1998,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
       if (prev.type === "model" && prev.providerName === oldName) return { ...prev, providerName: newName };
       return prev;
     });
-  }, []);
+  }, [config.providers]);
 
   const deleteProvider = useCallback((name: string) => {
     setConfig((prev) => {
@@ -2109,7 +2136,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
              <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>{t("common.models")}</span>
-            <code style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>~/.pi/agent/models.json</code>
+            <code style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>~/.omp/agent/models.yaml</code>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "2px 6px" }}>×</button>
         </div>

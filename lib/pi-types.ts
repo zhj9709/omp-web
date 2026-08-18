@@ -1,12 +1,55 @@
-import type {
-  AgentSessionEvent,
-  BashOperations,
-  SessionManager,
-  SettingsManager,
-  SlashCommandInfo,
-  Theme,
-} from "@earendil-works/pi-coding-agent";
-import type { AgentMessage as PiAgentMessage } from "@earendil-works/pi-agent-core";
+/* Local structural types replacing pi SDK imports */
+
+export interface SlashCommandInfo {
+  sourceInfo: {
+    source?: string;
+    scope?: string;
+    path?: string;
+    type?: string;
+  };
+}
+
+export interface Theme {
+  name: string;
+  [key: string]: unknown;
+}
+
+export interface AgentSessionEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface BashOperations {
+  exec(
+    command: string,
+    cwd: string,
+    options?: { env?: NodeJS.ProcessEnv; timeout?: number; signal?: AbortSignal },
+  ): Promise<{ output: string; exitCode?: number; cancelled?: boolean; truncated?: boolean; fullOutputPath?: string }>;
+}
+
+export interface SessionManager {
+  readonly agentDir: string;
+  readonly sessionsDir: string;
+  getSessionFile(sessionId: string): string | undefined;
+  listAllSessions(): Promise<unknown[]>;
+  getSession(id: string): unknown;
+  deleteSession(id: string): Promise<boolean>;
+}
+
+export interface SettingsManager {
+  getDefaultProvider(): string | undefined;
+  getDefaultModel(): string | undefined;
+  getDefaultThinkingLevel(): string | undefined;
+  setDefaultModelAndProvider(provider: string, modelId: string): void;
+  setDefaultThinkingLevel(level: string): void;
+  flush(): Promise<void>;
+}
+
+export interface AgentMessage {
+  role: string;
+  content: unknown;
+  [key: string]: unknown;
+}
 
 export interface ContextUsage {
   percent: number | null;
@@ -136,7 +179,7 @@ export interface AgentSessionLike {
     state?: {
       systemPrompt?: string;
       thinkingLevel?: string;
-      streamingMessage?: PiAgentMessage;
+      streamingMessage?: AgentMessage;
     };
   };
   readonly extensionRunner: ExtensionRunnerLike;

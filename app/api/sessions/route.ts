@@ -15,7 +15,13 @@ export async function GET(req: Request) {
       listAllSessions({ force }),
       attachSessionProjectInfo(getRpcSessionInfos()),
     ]);
-    const sessions = mergeSessionLists(persistedSessions, runtimeSessions);
+    const sessions = mergeSessionLists(persistedSessions, runtimeSessions)
+      // Runtime-only wrappers with no messages yet (server-side RPC sessions
+      // before their JSONL file holds any content) surface as empty
+      // "(live session)" ghosts in the sidebar — nothing to show, so hide
+      // them. Once the session file has real messages, the persisted entry
+      // carries the actual data.
+      .filter((session) => !(session.firstMessage === "(live session)" && session.messageCount === 0));
     return NextResponse.json(
       { sessions, runningSessionIds: getRunningRpcSessionIds() },
       { headers: { "Cache-Control": "no-store" } },

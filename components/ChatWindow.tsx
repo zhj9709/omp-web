@@ -1,6 +1,6 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
@@ -55,20 +55,45 @@ interface Props {
 }
 
 function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, string | number>) => string): string | null {
+  if (phase?.kind === "thinking") return t("chat.thinking");
   if (phase?.kind === "running_tools") {
     const latest = phase.tools[phase.tools.length - 1];
-    if (latest?.progress) {
-      return `${t("chat.runningNamedTool", { name: latest.name })} ${latest.progress}`;
-    }
+    // Terminal-style: prefer the concrete command/action being run over the
+    // generic tool name, with the latest output line as live progress.
+    if (latest?.detail) return latest.detail;
+    if (latest?.progress) return `${latest.name} ${latest.progress}`;
     const names = phase.tools.map((t) => t.name);
     if (names.length === 0) return t("chat.runningTool");
-    if (names.length === 1) return t("chat.runningNamedTool", { name: names[0] });
-    if (names.length <= 3) return t("chat.runningTools", { names: names.join(", ") });
+    if (names.length === 1) return names[0];
+    if (names.length <= 3) return names.join(", ");
     return t("chat.runningToolsMore", { names: names.slice(0, 2).join(", "), count: names.length - 2 });
   }
   if (phase?.kind === "waiting_model") return t("chat.waitingModel");
   if (phase?.kind === "running_command") return t("chat.runningCommand");
   return null;
+}
+
+/**
+ * TUI-style waiting indicator: spinner + shimmer-sweep label + elapsed
+ * clock. The TUI's animated status line makes the same 3-6s first-token
+ * latency feel alive; a static line reads as frozen. Motion is disabled
+ * under prefers-reduced-motion via the CSS.
+ */
+function WaitingPhaseIndicator({ label }: { label: string | null }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const startedAt = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (label === null) return null;
+  return (
+    <div className="flex items-center gap-2.5 py-2 text-[13px] text-text-muted">
+      <span className="chat-wait-spinner shrink-0" aria-hidden="true" />
+      <span className="chat-wait-label break-words">{label}</span>
+      {elapsed > 0 && <span className="shrink-0 text-[11px] tabular-nums text-text-dim">{elapsed}s</span>}
+    </div>
+  );
 }
 
 const CHAT_MINIMAP_WIDTH = 36;
@@ -253,7 +278,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
 
@@ -303,6 +328,24 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   });
   const sessionBusy = agentRunning || bashRunning;
   const [todosOpen, setTodosOpen] = useState(false);
+  const todoCounts = countTodos(todoPhases);
+
+  // Stable callbacks for memoized child components (SubagentRoster / TodosPanel).
+  // Inline arrows here would defeat their memo() on every ChatWindow re-render.
+  const handleRefreshSubagents = useCallback(() => {
+    const sid = sessionIdRef.current;
+    if (sid) void refreshSubagents(sid);
+    // sessionIdRef is a stable ref object; listed to satisfy exhaustive-deps.
+  }, [refreshSubagents, sessionIdRef]);
+  const handleTodosClose = useCallback(() => setTodosOpen(false), []);
+
+  // Auto-open the todo panel while open tasks exist; TodosPanel closes itself
+  // (via onClose) once every task is complete.
+  useEffect(() => {
+    if (todoCounts.total > 0 && todoCounts.done < todoCounts.total) {
+      setTodosOpen(true);
+    }
+  }, [todoCounts.total, todoCounts.done]);
 
   useEffect(() => {
     if (!extensionDialog || soundedExtensionDialogIdRef.current === extensionDialog.id) return;
@@ -310,9 +353,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     playDoneSoundRef.current();
   }, [extensionDialog]);
 
-  // Register the abort handler for the global Esc shortcut
+  // Register the abort handler for the global Esc shortcut. The cleanup is
+  // required: without it, an unmounted ChatWindow leaves its handleAbort
+  // closure in the module-level slot and the global Esc in AppShell keeps
+  // calling it (sending abort RPCs to a session this component no longer owns).
   useEffect(() => {
     registerAbortHandler(sessionBusy ? handleAbort : null);
+    return () => registerAbortHandler(null);
   }, [sessionBusy, handleAbort]);
 
   // --- Lazy-load historical messages ---
@@ -396,7 +443,12 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
-  const visibleMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  // Derived view filtered once per messages change; an inline filter here
+  // would run O(messages) on every ChatWindow re-render (scroll, hover, …).
+  const visibleMessages = useMemo(
+    () => messages.filter((m) => m.role === "user" || m.role === "assistant"),
+    [messages],
+  );
   // Stable Map identity: `messages` doesn't change during streaming updates
   // (the streaming message lives in streamState), so memoized MessageViews
   // skip re-rendering on every message_update event. An inline `new Map()`
@@ -526,7 +578,19 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   ]);
 
   useLayoutEffect(() => {
-    promptAnchorUpdateRef.current?.();
+    // The prompt-anchor spacer height depends on the streaming content size.
+    // Run the measurement off the layout-effect path: calling it synchronously
+    // here forces a style recalc + layout read + spacer write on every streamed
+    // frame (layout thrash on long replies). The rAF below coalesces with the
+    // ResizeObserver-driven measurement in the anchor effect above, so the
+    // spacer still tracks content growth one frame later — without blocking
+    // the main thread per token.
+    const update = promptAnchorUpdateRef.current;
+    if (!update) return;
+    const raf = requestAnimationFrame(() => {
+      promptAnchorUpdateRef.current?.();
+    });
+    return () => cancelAnimationFrame(raf);
   }, [streamState.streamingMessage]);
 
   const availableThinkingLevels = displayModelValue
@@ -536,6 +600,202 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const currentThinkingLevelMap = displayModelValue
     ? (modelThinkingLevelMaps[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
+
+  // The message list is expensive to rebuild (every anchor/process/final
+  // split walks all messages). During streaming, `messages` and the other
+  // deps below don't change — only streamState.streamingMessage does — so
+  // memoizing the rendered list here turns per-token work from O(n) list
+  // rebuilds into a cache hit plus a single streaming tail update.
+  const renderedMessages = useMemo(() => {
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") { lastUserIdx = i; break; }
+    }
+    // Anchor for live-tail detection: the last user message, or a
+    // compaction summary when compaction has replaced it mid-turn.
+    // Computed independently from lastUserIdx (which is kept for the
+    // scroll-to-user ref) because a compaction summary can sit after
+    // the last user message and anchor the still-streaming segment.
+    let lastAnchorIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (isGroupAnchor(messages[i])) { lastAnchorIdx = i; break; }
+    }
+
+    const visibleRefIndexByMessage = new Map<number, number>();
+    let refIdx = 0;
+    messages.forEach((msg, idx) => {
+      if (msg.role === "user" || msg.role === "assistant") {
+        visibleRefIndexByMessage.set(idx, refIdx++);
+      }
+    });
+
+    const attachVisibleRef = (idx: number, refIndex: number) => (el: HTMLDivElement | null) => {
+      messageRefs.current[refIndex] = el;
+      if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
+    };
+
+    const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[] } = {}): ReactNode => {
+      const msg = options.messageOverride ?? messages[idx];
+      const prevAssistantEntryId =
+        msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
+          ? entryIds[idx - 1]
+          : undefined;
+      const isVisible = msg.role === "user" || msg.role === "assistant";
+      const currentRefIdx = visibleRefIndexByMessage.get(idx);
+      const keyPrefix = options.keyPrefix ?? "message";
+      let showTimestamp = false;
+      if (msg.role === "assistant") {
+        showTimestamp = true;
+        for (let j = idx + 1; j < messages.length; j++) {
+          const r = messages[j].role;
+          if (r === "user") break;
+          if (r === "assistant") { showTimestamp = false; break; }
+        }
+        // Hide on the currently-streaming tail (the streaming bubble owns the live timestamp)
+        if (showTimestamp && streamState.isStreaming && idx === messages.length - 1) {
+          showTimestamp = false;
+        }
+      }
+      if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
+      const view = (
+        <MessageView
+          key={`${keyPrefix}-view-${idx}`}
+          message={msg}
+          toolResults={toolResultsMap}
+          modelNames={modelNames}
+          cwd={messageCwd}
+          onOpenFile={onOpenFile}
+          entryId={entryIds[idx]}
+          onFork={sessionBusy || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
+          forking={forkingEntryId === entryIds[idx]}
+          onNavigate={sessionBusy ? undefined : handleNavigate}
+          prevAssistantEntryId={sessionBusy ? undefined : prevAssistantEntryId}
+          onEditContent={handleEditContent}
+          showTimestamp={showTimestamp}
+          prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
+          sessionId={session?.id ?? sessionIdRef.current ?? undefined}
+          writtenFiles={options.writtenFiles}
+        />
+      );
+      if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
+      return (
+        <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+          {view}
+        </div>
+      );
+    };
+
+    const rendered: ReactNode[] = [];
+    for (let idx = 0; idx < messages.length;) {
+      const msg = messages[idx];
+      if (!isGroupAnchor(msg)) {
+        rendered.push(renderMessage(idx));
+        idx += 1;
+        continue;
+      }
+
+      const userIdx = idx;
+      let endIdx = userIdx + 1;
+      while (endIdx < messages.length && !isGroupAnchor(messages[endIdx])) endIdx += 1;
+
+      const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
+
+      if (finalAssistantIdx === -1) {
+        for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
+          rendered.push(renderMessage(renderIdx));
+        }
+        idx = endIdx;
+        continue;
+      }
+
+      const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
+      if (isLiveTail) {
+        for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
+          rendered.push(renderMessage(renderIdx));
+        }
+        idx = endIdx;
+        continue;
+      }
+
+      rendered.push(renderMessage(userIdx));
+
+      const processIndices: number[] = [];
+      for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
+        processIndices.push(processIdx);
+      }
+      const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(messages[processIdx]));
+      const finalAssistant = messages[finalAssistantIdx] as AssistantMessage;
+      const finalSplit = splitFinalAssistantBlocks(finalAssistant);
+      const finalProcessMessage = finalSplit.processBlocks.length > 0
+        ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
+        : null;
+      const finalAnswerMessage = finalSplit.answerBlocks.length > 0 || getAssistantErrorMessage(finalAssistant)
+        ? withAssistantBlocks(finalAssistant, finalSplit.answerBlocks)
+        : null;
+
+      const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
+      if (processCount > 0) {
+        const processRefIdx = visibleProcessIndices
+          .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
+          .find((value): value is number => typeof value === "number")
+          ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
+        const processGroup = (
+          <ProcessDetailsGroup
+            messageCount={processCount}
+            defaultExpanded={!finalAnswerMessage}
+            t={t}
+            toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
+          >
+            {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
+            {finalProcessMessage && renderMessage(finalAssistantIdx, { attachRef: false, keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
+          </ProcessDetailsGroup>
+        );
+        rendered.push(
+          <div
+            key={`process-group-${userIdx}-${finalAssistantIdx}`}
+            ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
+          >
+            {processGroup}
+          </div>,
+        );
+      }
+
+      if (finalAnswerMessage) {
+        // Each tool call is stored as its own assistant entry, so the
+        // final answer alone carries no record of what the turn wrote.
+        // Gather the turn's assistant blocks and derive the file list
+        // from the write/edit calls among them.
+        const turnContent: AssistantContentBlock[] = [];
+        for (let i = userIdx + 1; i <= finalAssistantIdx; i++) {
+          const m = messages[i];
+          if (m?.role === "assistant") {
+            for (const b of (m as AssistantMessage).content ?? []) turnContent.push(b);
+          }
+        }
+        const writtenFiles = extractTurnWrittenFiles(turnContent, toolResultsMap, messageCwd);
+        rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage, writtenFiles }));
+      }
+      for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
+        rendered.push(renderMessage(renderIdx));
+      }
+      idx = endIdx;
+    }
+    const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
+    return (
+      <>
+        {hasMore && (
+          <div ref={sentinelRef} className="py-3 text-center text-xs text-text-muted">
+            {t("chat.loadEarlier", { count: startIndex })}
+          </div>
+        )}
+        {rendered.slice(startIndex)}
+      </>
+    );
+  }, [
+    messages, entryIds, visibleCount, modelNames, toolResultsMap, messageCwd,
+    onOpenFile, handleFork, forkingEntryId, handleNavigate, handleEditContent,
+    session, sessionBusy, streamState.isStreaming, isNew, t,
+  ]);
 
   const chatInputElement = (
     <ChatInput
@@ -679,75 +939,9 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       <SubagentRoster
         subagents={subagents}
         unavailable={subagentsUnavailable}
-        onRefresh={() => {
-          const sid = sessionIdRef.current;
-          if (sid) void refreshSubagents(sid);
-        }}
+        onRefresh={handleRefreshSubagents}
         loadTranscript={loadSubagentTranscript}
       />
-
-      <button
-        type="button"
-        onClick={() => setTodosOpen((open) => !open)}
-        aria-label="Toggle todos"
-        title="Todos"
-        style={{
-          position: "absolute",
-          top: 12,
-          right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
-          zIndex: 45,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "6px 10px",
-          background: todosOpen ? "var(--bg-hover)" : "var(--bg-panel)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          color: "var(--text)",
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: "pointer",
-        }}
-      >
-        <span>Todos</span>
-        {countTodos(todoPhases).total > 0 && (
-          <span
-            style={{
-              background: "var(--accent)",
-              color: "#ffffff",
-              borderRadius: 999,
-              minWidth: 18,
-              height: 18,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 11,
-              padding: "0 5px",
-            }}
-          >
-            {countTodos(todoPhases).total - countTodos(todoPhases).done}
-          </span>
-        )}
-      </button>
-
-      {todosOpen && (
-        <div
-          style={{
-            position: "absolute",
-            top: 52,
-            right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
-            zIndex: 50,
-            width: isMobile ? "calc(100% - 24px)" : 340,
-            maxHeight: "70%",
-          }}
-        >
-          <TodosPanel
-            phases={todoPhases}
-            onChange={setTodos}
-            onClose={() => setTodosOpen(false)}
-          />
-        </div>
-      )}
 
 
       {isEmptyNew ? (
@@ -767,7 +961,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
             >
               <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
                 <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: 0, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>π</span>
-                <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>Pi Web</span>
+                <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>OMP Web</span>
                 <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
@@ -789,200 +983,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
-            {(() => {
-              let lastUserIdx = -1;
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].role === "user") { lastUserIdx = i; break; }
-              }
-              // Anchor for live-tail detection: the last user message, or a
-              // compaction summary when compaction has replaced it mid-turn.
-              // Computed independently from lastUserIdx (which is kept for the
-              // scroll-to-user ref) because a compaction summary can sit after
-              // the last user message and anchor the still-streaming segment.
-              let lastAnchorIdx = -1;
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (isGroupAnchor(messages[i])) { lastAnchorIdx = i; break; }
-              }
-
-              const visibleRefIndexByMessage = new Map<number, number>();
-              let refIdx = 0;
-              messages.forEach((msg, idx) => {
-                if (msg.role === "user" || msg.role === "assistant") {
-                  visibleRefIndexByMessage.set(idx, refIdx++);
-                }
-              });
-
-              const attachVisibleRef = (idx: number, refIndex: number) => (el: HTMLDivElement | null) => {
-                messageRefs.current[refIndex] = el;
-                if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
-              };
-
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[] } = {}): ReactNode => {
-                const msg = options.messageOverride ?? messages[idx];
-                const prevAssistantEntryId =
-                  msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
-                    ? entryIds[idx - 1]
-                    : undefined;
-                const isVisible = msg.role === "user" || msg.role === "assistant";
-                const currentRefIdx = visibleRefIndexByMessage.get(idx);
-                const keyPrefix = options.keyPrefix ?? "message";
-                let showTimestamp = false;
-                if (msg.role === "assistant") {
-                  showTimestamp = true;
-                  for (let j = idx + 1; j < messages.length; j++) {
-                    const r = messages[j].role;
-                    if (r === "user") break;
-                    if (r === "assistant") { showTimestamp = false; break; }
-                  }
-                  // Hide on the currently-streaming tail (the streaming bubble owns the live timestamp)
-                  if (showTimestamp && streamState.isStreaming && idx === messages.length - 1) {
-                    showTimestamp = false;
-                  }
-                }
-                if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
-                const view = (
-                  <MessageView
-                    key={`${keyPrefix}-view-${idx}`}
-                    message={msg}
-                    toolResults={toolResultsMap}
-                    modelNames={modelNames}
-                    cwd={messageCwd}
-                    onOpenFile={onOpenFile}
-                    entryId={entryIds[idx]}
-                    onFork={sessionBusy || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
-                    forking={forkingEntryId === entryIds[idx]}
-                    onNavigate={sessionBusy ? undefined : handleNavigate}
-                    prevAssistantEntryId={sessionBusy ? undefined : prevAssistantEntryId}
-                    onEditContent={handleEditContent}
-                    showTimestamp={showTimestamp}
-                    prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
-                    sessionId={session?.id ?? sessionIdRef.current ?? undefined}
-                    writtenFiles={options.writtenFiles}
-                  />
-                );
-                if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
-                return (
-                  <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
-                    {view}
-                  </div>
-                );
-              };
-
-              const rendered: ReactNode[] = [];
-              for (let idx = 0; idx < messages.length;) {
-                const msg = messages[idx];
-                if (!isGroupAnchor(msg)) {
-                  rendered.push(renderMessage(idx));
-                  idx += 1;
-                  continue;
-                }
-
-                const userIdx = idx;
-                let endIdx = userIdx + 1;
-                while (endIdx < messages.length && !isGroupAnchor(messages[endIdx])) endIdx += 1;
-
-                const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
-
-                if (finalAssistantIdx === -1) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
-                  idx = endIdx;
-                  continue;
-                }
-
-                const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
-                if (isLiveTail) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
-                  idx = endIdx;
-                  continue;
-                }
-
-                rendered.push(renderMessage(userIdx));
-
-                const processIndices: number[] = [];
-                for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
-                  processIndices.push(processIdx);
-                }
-                const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(messages[processIdx]));
-                const finalAssistant = messages[finalAssistantIdx] as AssistantMessage;
-                const finalSplit = splitFinalAssistantBlocks(finalAssistant);
-                const finalProcessMessage = finalSplit.processBlocks.length > 0
-                  ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
-                  : null;
-                const finalAnswerMessage = finalSplit.answerBlocks.length > 0 || getAssistantErrorMessage(finalAssistant)
-                  ? withAssistantBlocks(finalAssistant, finalSplit.answerBlocks)
-                  : null;
-
-                const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
-                if (processCount > 0) {
-                  const processRefIdx = visibleProcessIndices
-                    .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
-                    .find((value): value is number => typeof value === "number")
-                    ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
-                  const processGroup = (
-                    <ProcessDetailsGroup
-                      messageCount={processCount}
-                      defaultExpanded={!finalAnswerMessage}
-                      t={t}
-                      toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
-                    >
-                      {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
-                      {finalProcessMessage && renderMessage(finalAssistantIdx, { attachRef: false, keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
-                    </ProcessDetailsGroup>
-                  );
-                  rendered.push(
-                    <div
-                      key={`process-group-${userIdx}-${finalAssistantIdx}`}
-                      ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
-                    >
-                      {processGroup}
-                    </div>,
-                  );
-                }
-
-                if (finalAnswerMessage) {
-                  // Each tool call is stored as its own assistant entry, so the
-                  // final answer alone carries no record of what the turn wrote.
-                  // Gather the turn's assistant blocks and derive the file list
-                  // from the write/edit calls among them.
-                  const turnContent: AssistantContentBlock[] = [];
-                  for (let i = userIdx + 1; i <= finalAssistantIdx; i++) {
-                    const m = messages[i];
-                    if (m?.role === "assistant") {
-                      for (const b of (m as AssistantMessage).content ?? []) turnContent.push(b);
-                    }
-                  }
-                  const writtenFiles = extractTurnWrittenFiles(turnContent, toolResultsMap, messageCwd);
-                  rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage, writtenFiles }));
-                }
-                for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
-                  rendered.push(renderMessage(renderIdx));
-                }
-                idx = endIdx;
-              }
-              const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
-              return (
-                <>
-                  {hasMore && (
-                     <div ref={sentinelRef} className="py-3 text-center text-xs text-text-muted">
-                       {t("chat.loadEarlier", { count: startIndex })}
-                    </div>
-                  )}
-                  {rendered.slice(startIndex)}
-                </>
-              );
-            })()}
+            {renderedMessages}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
               <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
             )}
 
-            {agentRunning && !hasStreamingContent && agentPhase && (
-              <div className="break-words py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
-              </div>
+            {agentRunning && agentPhase && (!hasStreamingContent || agentPhase.kind === "running_tools") && (
+              <WaitingPhaseIndicator label={phaseLabel(agentPhase, t)} />
             )}
 
             {bashRunning && !pendingBash && (
@@ -1021,6 +1028,22 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       </div>
 
       <div className="relative">
+        {todosOpen && (
+          <div
+            style={{
+              padding: "0 16px 8px",
+              paddingRight: isMobile ? 16 : 52,
+            }}
+          >
+            <div style={{ maxWidth: 820, margin: "0 auto" }}>
+              <TodosPanel
+                phases={todoPhases}
+                onChange={setTodos}
+                onClose={handleTodosClose}
+              />
+            </div>
+          </div>
+        )}
         {chatInputElement}
         <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
       </div>
@@ -1028,7 +1051,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       )}
     </div>
   );
-}
+});
 
 function NoticeShelf({ notices, floating = false }: { notices: NoticeItem[]; floating?: boolean }) {
   if (notices.length === 0) return null;

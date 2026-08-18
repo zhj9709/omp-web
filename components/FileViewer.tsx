@@ -2,16 +2,21 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from "react";
 import {
-  Prism as SyntaxHighlighter,
+  PrismLight as SyntaxHighlighter,
   createElement as renderSyntaxNode,
   type SyntaxHighlighterProps,
 } from "react-syntax-highlighter";
-import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import { vs } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { registerSyntaxLanguages, resolveSyntaxLanguage } from "@/lib/syntax-languages";
 import ReactMarkdown from "react-markdown";
+
+// Curated grammars instead of the ~1.1MB every-language refractor bundle.
+registerSyntaxLanguages((name, lang) => SyntaxHighlighter.registerLanguage(name, lang as never));
 import { useTheme } from "@/hooks/useTheme";
 import {
   DOCX_PREVIEW_MAX_BYTES,
+  IMAGE_PREVIEW_MAX_BYTES,
   getFileExt,
   isAudioPath,
   isDocumentPreviewPath,
@@ -463,7 +468,13 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
             setError(next.error);
             return;
           }
-          if (typeof next.size === "number") setSize(next.size);
+          if (typeof next.size === "number") {
+            setSize(next.size);
+            if (next.size > IMAGE_PREVIEW_MAX_BYTES) {
+              setError("Image too large (>10MB)");
+              return;
+            }
+          }
           setNaturalSize(null);
           setError(null);
           setBust((value) => value + 1);
@@ -909,7 +920,9 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
           <iframe
             key={previewUrl}
             src={previewUrl}
-            sandbox={isPdf ? undefined : "allow-same-origin"}
+            // Sandbox both branches. PDFs need allow-same-origin for Chrome's
+            // built-in viewer and allow-downloads so its toolbar can save the file.
+            sandbox={isPdf ? "allow-same-origin allow-downloads" : "allow-same-origin"}
             title={t("i18n.previewFile", { file: getFileName(filePath) })}
             style={{ width: "100%", height: "100%", border: "none", background: isPdf ? "var(--bg)" : "#eef1f5" }}
           />
@@ -1504,7 +1517,7 @@ function TextFileViewer({
         ) : (
           <SyntaxHighlighter
             className={wrapLines ? "file-source-view is-wrapped" : "file-source-view"}
-            language={language === "text" ? "plaintext" : language}
+            language={resolveSyntaxLanguage(language) ?? "text"}
             style={isDark ? vscDarkPlus : vs}
             showLineNumbers
             lineNumberStyle={{

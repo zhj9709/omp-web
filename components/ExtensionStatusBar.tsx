@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { parseAnsiLine, stripAnsi } from "@/lib/ansi";
 import type { ExtensionStatusItem, ExtensionWidgetItem } from "@/lib/types";
 import { ExtensionWidgets } from "./ExtensionWidgets";
@@ -18,7 +19,7 @@ export function formatExtensionStatusLine(statuses: ExtensionStatusItem[]): stri
     .join(" ");
 }
 
-export function ExtensionStatusBar({
+export const ExtensionStatusBar = memo(function ExtensionStatusBar({
   statuses,
   widgets = [],
 }: {
@@ -51,4 +52,4 @@ export function ExtensionStatusBar({
       )}
     </div>
   );
-}
+});

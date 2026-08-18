@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
 
@@ -64,12 +64,15 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
   const [drives, setDrives] = useState<DirectoryEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const navigateSeqRef = useRef(0);
 
   const navigateTo = useCallback(async (directory?: string) => {
+    const requestId = ++navigateSeqRef.current;
     setLoading(true);
     setLoadError(null);
     try {
       const data = await loadDirectories(directory);
+      if (requestId !== navigateSeqRef.current) return;
       const nextPath = data.path ?? directory ?? "/";
       setCurrentPath(nextPath);
       setParentDirectory(data.parentPath ?? null);
@@ -77,9 +80,10 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
       setDirectories(data.directories ?? []);
       setDrives(data.drives ?? null);
     } catch (cause) {
+      if (requestId !== navigateSeqRef.current) return;
       setLoadError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoading(false);
+      if (requestId === navigateSeqRef.current) setLoading(false);
     }
   }, []);
 

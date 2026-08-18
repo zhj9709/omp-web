@@ -1,12 +1,18 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
+import { vs } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { registerSyntaxLanguages, resolveSyntaxLanguage } from "@/lib/syntax-languages";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { copyText } from "@/lib/clipboard";
+
+// Register the curated grammar set once per module load. The light build
+// ships no languages, so this replaces the ~1.1MB every-language bundle
+// (refractor) that the full `Prism` export pulled into the first paint.
+registerSyntaxLanguages((name, lang) => SyntaxHighlighter.registerLanguage(name, lang as never));
 
 interface MermaidBlockProps {
   code: string;
@@ -241,12 +247,13 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
-
+  // Alias/markdown-metadata aware fence language -> registered Prism grammar.
+  const resolvedLang = resolveSyntaxLanguage(lang);
   const copy = () => {
     copyText(code).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }).catch(() => {});
   };
 
   return (
@@ -278,7 +285,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
         </pre>
       ) : (
         <SyntaxHighlighter
-          language={lang || "text"}
+          language={resolvedLang ?? "text"}
           style={isDark ? vscDarkPlus : vs}
           showLineNumbers
           lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}

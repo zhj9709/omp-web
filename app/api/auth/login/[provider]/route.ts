@@ -1,186 +1,160 @@
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { invalidateModelsCache } from "@/lib/models-cache";
+import { OmpRpcClient, type OmpEvent } from "@/lib/rpc-client";
+import {
+  getPendingLogin,
+  registerPendingLogin,
+  unregisterPendingLogin,
+} from "@/lib/auth-login";
 
 export const dynamic = "force-dynamic";
 
-// In-memory registry: loginToken -> resolve/reject for the manualCodeInput promise
-declare global {
-  var __piLoginCallbacks: Map<string, { resolve: (v: string) => void; reject: (e: Error) => void }> | undefined;
-}
+type ExtensionUiRequest = OmpEvent & {
+  id: string;
+  method: string;
+  url?: string;
+  launchUrl?: string;
+  instructions?: string;
+  title?: string;
+  message?: string;
+};
 
-function getCallbackRegistry() {
-  if (!globalThis.__piLoginCallbacks) globalThis.__piLoginCallbacks = new Map();
-  return globalThis.__piLoginCallbacks;
-}
-
-// POST /api/auth/login/[provider] — frontend sends redirect URL or auth code
+// POST /api/auth/login/[provider] — manual-code / redirect-URL fallback.
+// Routes the pasted value back to OMP as an `extension_ui_response` for the
+// pending `input` request the login flow emitted.
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ provider: string }> }
+  { params }: { params: Promise<{ provider: string }> },
 ) {
   const { provider } = await params;
-  const { token, code } = (await req.json()) as { token?: string; code?: string };
+  let body: { token?: string; code?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
+  const { token, code } = body;
   if (!token || !code) {
     return Response.json({ error: "token and code required" }, { status: 400 });
   }
 
-  const registry = getCallbackRegistry();
-  const callbacks = registry.get(token);
-  if (!callbacks) {
+  const pending = getPendingLogin(token);
+  if (!pending) {
     return Response.json({ error: "No pending login for token" }, { status: 404 });
   }
-  // Verify token belongs to this provider (token format: "<provider>-<ts>-<random>")
-  if (!token.startsWith(`${provider}-`)) {
+  if (pending.provider !== provider) {
     return Response.json({ error: "Token does not match provider" }, { status: 400 });
   }
+  if (!pending.inputId) {
+    return Response.json({ error: "No pending input for this login" }, { status: 409 });
+  }
 
-  callbacks.resolve(code);
-  registry.delete(token);
+  pending.client
+    .send({ type: "extension_ui_response", id: pending.inputId, value: code })
+    .catch((err) => {
+      console.error(
+        "[omp-web] login extension_ui_response failed:",
+        err instanceof Error ? err.message : err,
+      );
+    });
+
   return Response.json({ ok: true, provider });
 }
 
-// GET /api/auth/login/[provider] — SSE stream for OAuth flow
+// GET /api/auth/login/[provider] — SSE stream for the OAuth login flow.
 export async function GET(
   req: Request,
-  { params }: { params: Promise<{ provider: string }> }
+  { params }: { params: Promise<{ provider: string }> },
 ) {
   const { provider } = await params;
 
   const encoder = new TextEncoder();
-  const send = (controller: ReadableStreamDefaultController, data: unknown) => {
+  const send = (
+    controller: ReadableStreamDefaultController,
+    data: unknown,
+  ) => {
     controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
   };
 
-  // AbortController propagates client disconnect into ModelRuntime.login().
-  const abort = new AbortController();
-  req.signal.addEventListener("abort", () => abort.abort());
+  const client = new OmpRpcClient({});
+  const token = `${provider}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const pending = { provider, client, inputId: null as string | null };
+  registerPendingLogin(token, pending);
 
-  const stream = new ReadableStream({
+  const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const modelRuntime = await ModelRuntime.create();
-      if (!modelRuntime.getProvider(provider)?.auth.oauth) {
-        send(controller, { type: "error", message: `Unknown provider: ${provider}` });
-        controller.close();
-        return;
-      }
+      let sentAuth = false;
+      let sentPrompt = false;
 
-      const registry = getCallbackRegistry();
-      const activeTokens = new Set<string>();
-      let pendingManualRequest: { token: string; promise: Promise<string> } | undefined;
+      client.onEvent((event: OmpEvent) => {
+        if (event.type !== "extension_ui_request") return;
+        const request = event as ExtensionUiRequest;
 
-      const createClientInputRequest = () => {
-        const token = `${provider}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        activeTokens.add(token);
-
-        const promise = new Promise<string>((resolve, reject) => {
-          registry.set(token, {
-            resolve: (value) => {
-              activeTokens.delete(token);
-              registry.delete(token);
-              resolve(value);
-            },
-            reject: (error) => {
-              activeTokens.delete(token);
-              registry.delete(token);
-              reject(error);
-            },
-          });
-        });
-
-        return { token, promise };
-      };
-
-      const getManualInputRequest = () => {
-        if (!pendingManualRequest) {
-          pendingManualRequest = createClientInputRequest();
-          pendingManualRequest.promise
-            .finally(() => {
-              pendingManualRequest = undefined;
-            })
-            .catch(() => {});
-        }
-        return pendingManualRequest;
-      };
-
-      // Cleanup: remove pending token and abort any waiting promise
-      const cleanup = () => {
-        for (const token of activeTokens) {
-          registry.get(token)?.reject(new Error("Login cancelled"));
-          registry.delete(token);
-        }
-        activeTokens.clear();
-      };
-
-      // Also cancel on client disconnect
-      abort.signal.addEventListener("abort", cleanup);
-
-      try {
-        await modelRuntime.login(provider, "oauth", {
-          prompt: async (prompt: AuthPrompt) => {
-            const request = prompt.type === "manual_code"
-              ? getManualInputRequest()
-              : createClientInputRequest();
-            if (prompt.type === "select") {
-              send(controller, {
-                type: "select_request",
-                message: prompt.message,
-                options: prompt.options,
-                token: request.token,
-              });
-            } else {
+        switch (request.method) {
+          case "open_url":
+            sentAuth = true;
+            send(controller, {
+              type: "auth",
+              url: request.url,
+              instructions: request.instructions ?? null,
+              token,
+            });
+            break;
+          case "notify":
+            send(controller, {
+              type: "progress",
+              message: request.message ?? "Waiting for authentication…",
+            });
+            break;
+          case "input":
+            // OMP re-emits this fallback prompt in a tight loop while it waits;
+            // capture the id once and only surface the prompt a single time.
+            pending.inputId = pending.inputId ?? request.id;
+            if (!sentAuth && !sentPrompt) {
+              sentPrompt = true;
               send(controller, {
                 type: "prompt_request",
-                message: prompt.message,
-                placeholder: prompt.placeholder ?? null,
-                token: request.token,
+                message: request.title ?? "Enter value",
+                placeholder: null,
+                token,
               });
             }
-            return request.promise;
-          },
-          notify: (event: AuthEvent) => {
-            if (event.type === "auth_url") {
-              const request = getManualInputRequest();
-              send(controller, {
-                type: "auth",
-                url: event.url,
-                instructions: event.instructions ?? null,
-                token: request.token,
-              });
-            } else if (event.type === "device_code") {
-              send(controller, {
-                type: "device_code",
-                userCode: event.userCode,
-                verificationUri: event.verificationUri,
-                intervalSeconds: event.intervalSeconds ?? null,
-                expiresInSeconds: event.expiresInSeconds ?? null,
-              });
-            } else {
-              send(controller, { type: "progress", message: event.message });
-            }
-          },
-          signal: abort.signal,
-        });
-
-        invalidateModelsCache();
-        send(controller, { type: "success" });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg !== "Login cancelled") {
-          send(controller, { type: "error", message: msg });
-        } else {
-          send(controller, { type: "cancelled" });
+            break;
         }
+      });
+
+      try {
+        await client.start();
+        const result = await client.send({ type: "login", providerId: provider });
+        if (result.success) {
+          send(controller, { type: "success" });
+        } else {
+          send(controller, {
+            type: "error",
+            message: result.error ?? "Login failed",
+          });
+        }
+      } catch (error) {
+        send(controller, {
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
       } finally {
-        cleanup();
+        unregisterPendingLogin(token);
+        client.dispose();
         controller.close();
       }
     },
     cancel() {
-      abort.abort();
+      unregisterPendingLogin(token);
+      client.dispose();
     },
   });
+
+  // Abort the underlying login on client disconnect.
+  req.signal.addEventListener("abort", () => {
+    unregisterPendingLogin(token);
+    client.dispose();
+  }, { once: true });
 
   return new Response(stream, {
     headers: {

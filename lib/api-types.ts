@@ -1,4 +1,9 @@
-import type { ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
+export interface ResourceDiagnostic {
+  type: "warning" | "error";
+  message: string;
+  source?: string;
+  path?: string;
+}
 
 export interface SkillSearchResult {
   package: string;

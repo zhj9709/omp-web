@@ -978,14 +978,25 @@ function getRegistry(): Map<string, OmpSessionWrapper> {
     const cleanup = () =>
       globalThis.__ompSessions?.forEach((s) => {
         try {
-          s.destroy();
+          s.shutdown();
         } catch {
           // ignore
         }
       });
     process.once("exit", cleanup);
-    process.once("SIGINT", cleanup);
-    process.once("SIGTERM", cleanup);
+    // SIGINT/SIGTERM: dispose every live client (terminates the omp child
+    // via stdin EOF + SIGTERM), then re-raise so the process still exits with
+    // the default signal behavior instead of hanging on the listeners.
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+      process.once(signal, () => {
+        cleanup();
+        try {
+          process.kill(process.pid, signal);
+        } catch {
+          // ignore — fall through to process exit
+        }
+      });
+    }
   }
   return globalThis.__ompSessions;
 }
@@ -1048,63 +1059,71 @@ export async function startRpcSession(
       cwd: resolvedCwd,
     });
 
-    await client.start();
+    try {
+      await client.start();
 
-    let realSessionId = sessionId;
-    let realSessionFile = sessionFile;
+      let realSessionId = sessionId;
+      let realSessionFile = sessionFile;
 
-    if (sessionFile) {
-      // Existing session: switch to the session file
-      await client.sendCommand({ type: "switch_session", sessionPath: sessionFile });
-      realSessionFile = sessionFile;
-    } else {
-      // New session: OMP auto-creates one; get the session ID
-      const state = await client.sendCommand<Record<string, unknown>>({
-        type: "get_state",
+      if (sessionFile) {
+        // Existing session: switch to the session file
+        await client.sendCommand({ type: "switch_session", sessionPath: sessionFile });
+        realSessionFile = sessionFile;
+      } else {
+        // New session: OMP auto-creates one; get the session ID
+        const state = await client.sendCommand<Record<string, unknown>>({
+          type: "get_state",
+        });
+        realSessionId = (state.sessionId as string) ?? sessionId;
+        realSessionFile = (state.sessionFile as string) ?? "";
+      }
+
+      // Apply initial model if specified
+      if (initialModel) {
+        await client.sendCommand({
+          type: "set_model",
+          provider: initialModel.provider,
+          modelId: initialModel.modelId,
+        });
+      }
+
+      // Apply thinking level if specified
+      if (thinkingLevel) {
+        await client.sendCommand({
+          type: "set_thinking_level",
+          level: thinkingLevel,
+        });
+      }
+
+      // Apply queue modes if specified (new-session defaults from the UI)
+      if (steeringMode) {
+        await client.sendCommand({ type: "set_steering_mode", mode: steeringMode });
+      }
+      if (followUpMode) {
+        await client.sendCommand({ type: "set_follow_up_mode", mode: followUpMode });
+      }
+      if (interruptMode) {
+        await client.sendCommand({ type: "set_interrupt_mode", mode: interruptMode });
+      }
+
+      const wrapper = new OmpSessionWrapper(client, {
+        sessionId: realSessionId,
+        sessionFile: realSessionFile,
+        cwd: resolvedCwd,
       });
-      realSessionId = (state.sessionId as string) ?? sessionId;
-      realSessionFile = (state.sessionFile as string) ?? "";
-    }
 
-    // Apply initial model if specified
-    if (initialModel) {
-      await client.sendCommand({
-        type: "set_model",
-        provider: initialModel.provider,
-        modelId: initialModel.modelId,
-      });
-    }
+      wrapper.start();
+      wrapper.onDestroy(() => registry.delete(realSessionId));
+      registry.set(realSessionId, wrapper);
 
-    // Apply thinking level if specified
-    if (thinkingLevel) {
-      await client.sendCommand({
-        type: "set_thinking_level",
-        level: thinkingLevel,
-      });
+      return { session: wrapper, realSessionId };
+    } catch (error) {
+      // Any failure before the wrapper is registered (ready timeout, session
+      // switch, model config) must not leak the spawned omp child — it has no
+      // registry entry and would never hit the idle-timeout cleanup.
+      client.kill();
+      throw error;
     }
-
-    // Apply queue modes if specified (new-session defaults from the UI)
-    if (steeringMode) {
-      await client.sendCommand({ type: "set_steering_mode", mode: steeringMode });
-    }
-    if (followUpMode) {
-      await client.sendCommand({ type: "set_follow_up_mode", mode: followUpMode });
-    }
-    if (interruptMode) {
-      await client.sendCommand({ type: "set_interrupt_mode", mode: interruptMode });
-    }
-
-    const wrapper = new OmpSessionWrapper(client, {
-      sessionId: realSessionId,
-      sessionFile: realSessionFile,
-      cwd: resolvedCwd,
-    });
-
-    wrapper.start();
-    wrapper.onDestroy(() => registry.delete(realSessionId));
-    registry.set(realSessionId, wrapper);
-
-    return { session: wrapper, realSessionId };
   })().finally(() => {
     locks.delete(sessionId);
   });

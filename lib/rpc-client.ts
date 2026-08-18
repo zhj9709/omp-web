@@ -242,9 +242,12 @@ export class OmpRpcClient {
     this.process.on("exit", (code, signal) => {
       this._alive = false;
       this._ready = false;
-      if (signal) {
-        this.rejectReady(new Error(`omp exited with signal ${signal}`));
-      }
+      // Reject unconditionally: an exit with code (bad args/config) must not
+      // leave start() waiting out the full ready timeout. A second reject on
+      // an already-settled promise is a no-op.
+      this.rejectReady(
+        new Error(`omp process exited (code=${code}, signal=${signal})`),
+      );
       this.failAllPending(
         new Error(`omp process exited (code=${code}, signal=${signal})`),
       );
@@ -316,7 +319,13 @@ export class OmpRpcClient {
       }, this.options.commandTimeout);
     }
 
-    this.writeLine(JSON.stringify(cmd));
+    try {
+      this.writeLine(JSON.stringify(cmd));
+    } catch (error) {
+      // stdin unavailable: settle the pending entry instead of leaking it.
+      this.pending.delete(id);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
     return promise;
   }
 
@@ -344,36 +353,47 @@ export class OmpRpcClient {
 
   // -- cleanup ---------------------------------------------------------------
 
-  /** Graceful shutdown: close stdin, then SIGTERM after 1s. */
+  /** Graceful shutdown: close stdin, then SIGTERM after 1s, SIGKILL after 4s. */
   dispose(): void {
-    if (!this._alive) return;
+    if (!this.process || this.process.killed) return;
     this._alive = false;
     this._ready = false;
     this.failAllPending(new Error("omp client disposed"));
-    if (this.process) {
-      try {
-        this.process.stdin?.end();
-      } catch {
-        // ignore
-      }
-      setTimeout(() => {
+    try {
+      this.process.stdin?.end();
+    } catch {
+      // ignore
+    }
+    const processRef = this.process;
+    setTimeout(() => {
+      if (!processRef.killed) {
         try {
-          this.process?.kill("SIGTERM");
+          processRef.kill("SIGTERM");
         } catch {
           // ignore
         }
-      }, 1000).unref();
-    }
+      }
+      // SIGKILL backstop for a child that ignores SIGTERM.
+      setTimeout(() => {
+        if (!processRef.killed) {
+          try {
+            processRef.kill("SIGKILL");
+          } catch {
+            // ignore
+          }
+        }
+      }, 3000).unref();
+    }, 1000).unref();
   }
 
   /** Force kill the process immediately. */
   kill(): void {
-    if (!this._alive) return;
+    if (!this.process || this.process.killed) return;
     this._alive = false;
     this._ready = false;
     this.failAllPending(new Error("omp client killed"));
     try {
-      this.process?.kill("SIGKILL");
+      this.process.kill("SIGKILL");
     } catch {
       // ignore
     }
@@ -424,7 +444,13 @@ export class OmpRpcClient {
       frame.maxReassembledFrameBytes > 0
     ) {
       this.send({ type: "negotiate_protocol", protocolVersion: 2 })
-        .then(() => {
+        .then((res) => {
+          // A rejected negotiation (success:false) must fall back to v1, not
+          // silently claim v2 — otherwise client and server protocol state
+          // diverge and chunked frames are misinterpreted.
+          if (!res.success) {
+            throw new Error(res.error ?? "v2 negotiation rejected");
+          }
           this.protocolVersion = 2;
           this._ready = true;
           this.resolveReady();
@@ -484,10 +510,12 @@ export class OmpRpcClient {
     if (buffer.chunks.size === buffer.count) {
       this.chunkBuffers.delete(chunk.chunkId);
 
-      let base64 = "";
+      // Join with a single pass (repeated string += is O(n²) on large frames).
+      const parts: string[] = new Array(buffer.count);
       for (let i = 0; i < buffer.count; i++) {
-        base64 += buffer.chunks.get(i)!;
+        parts[i] = buffer.chunks.get(i)!;
       }
+      const base64 = parts.join("");
 
       const decoded = Buffer.from(base64, "base64");
       if (decoded.length !== buffer.byteLength) {

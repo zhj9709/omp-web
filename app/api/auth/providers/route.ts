@@ -1,13 +1,19 @@
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { buildOAuthProviderList } from "@/lib/provider-listing";
-import { collectProviderListingInputs } from "@/lib/provider-listing-runtime";
+import { getOAuthProviders } from "@/lib/auth-login";
 
 export const dynamic = "force-dynamic";
 
-// Providers that declare an OAuth login method, including anthropic
-// (Claude Pro/Max) — see lib/provider-listing.ts (#309).
+/**
+ * OAuth providers from OMP RPC `get_login_providers`.
+ * Each entry reports whether the provider is currently authenticated.
+ */
 export async function GET() {
-  const modelRuntime = await ModelRuntime.create();
-  const providers = buildOAuthProviderList(await collectProviderListingInputs(modelRuntime));
-  return Response.json({ providers });
+  try {
+    const providers = await getOAuthProviders();
+    return Response.json({ providers });
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
+  }
 }

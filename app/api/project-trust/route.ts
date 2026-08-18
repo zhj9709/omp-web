@@ -1,11 +1,9 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
 import { NextResponse } from "next/server";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@/lib/session-reader";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
-import { invalidateModelsCache } from "@/lib/models-cache";
-import { getProjectTrustStatus, trustProject } from "@/lib/project-trust";
-import { destroyRpcSessionsForCwd, hasBusyRpcSessionForCwd } from "@/lib/rpc-manager";
+import { getProjectTrustStatus } from "@/lib/project-trust";
 
 export const dynamic = "force-dynamic";
 
@@ -32,35 +30,33 @@ async function validateCwd(value: unknown): Promise<
   return { cwd };
 }
 
+/**
+ * GET /api/project-trust?cwd=<path>
+ *
+ * OMP v17.3.5 has no project-trust system. Returns a fixed "not applicable"
+ * status: all projects are treated as trusted, and no trust gate exists.
+ */
 export async function GET(req: Request) {
   const result = await validateCwd(new URL(req.url).searchParams.get("cwd"));
   if ("response" in result) return result.response;
   return NextResponse.json(getProjectTrustStatus(result.cwd, getAgentDir()));
 }
 
-export async function POST(req: Request) {
-  try {
-    const body = await req.json() as { cwd?: unknown };
-    const result = await validateCwd(body.cwd);
-    if ("response" in result) return result.response;
-
-    const agentDir = getAgentDir();
-    const current = getProjectTrustStatus(result.cwd, agentDir);
-    if (!current.requiresTrust) {
-      return NextResponse.json({ error: "This project has no resources that require trust" }, { status: 409 });
-    }
-    if (hasBusyRpcSessionForCwd(result.cwd)) {
-      return NextResponse.json({ error: "Wait for the active session to finish before trusting this project" }, { status: 409 });
-    }
-
-    const status = trustProject(result.cwd, agentDir);
-    invalidateModelsCache();
-    await destroyRpcSessionsForCwd(result.cwd);
-    return NextResponse.json(status);
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : String(error) },
-      { status: 500 },
-    );
-  }
+/**
+ * POST /api/project-trust  body: { cwd }
+ *
+ * OMP v17.3.5 has no project-trust store. There is no `omp trust` CLI command,
+ * no trust database in ~/.omp/agent/, and no trust gate in the resource loader.
+ * Trust operations are not available.
+ */
+export async function POST(_req: Request) {
+  return NextResponse.json(
+    {
+      error: "feature_unavailable",
+      message: "OMP v17.3.5 does not have a project trust system. " +
+        "Project resources (extensions, .agents/skills) are always loaded " +
+        "without a trust gate. No trust decision is required.",
+    },
+    { status: 501 },
+  );
 }

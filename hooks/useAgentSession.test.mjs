@@ -130,7 +130,11 @@ test("fresh sessions restore the preferred tool preset without overriding existi
 
   assert.match(
     preferenceSource,
-    /useLayoutEffect\(\(\) => \{\s*if \(!isNew \|\| sessionIdRef\.current\) return;\s*setToolPresetState\(getPreferredToolPreset\(\)\)/,
+    /useLayoutEffect\(\(\) => \{\s*if \(!isNew \|\| sessionIdRef\.current\) return;\s*const preferred = getPreferredToolPreset\(\)/,
+  );
+  assert.match(
+    preferenceSource,
+    /setToolPresetState\(\s*isRestrictiveToolRequest\(getToolNamesForPreset\(preferred\)\) \? "default" : preferred,\s*\)/,
   );
   assert.match(changeSource, /setPreferredToolPreset\(preset\)/);
   assert.match(changeSource, /sendAgentCommand\(sid, \{ type: "set_tools", toolNames \}\)/);
@@ -236,7 +240,7 @@ test("delegates event stream readiness and hides an empty agent phase", () => {
   assert.match(ensureSource, /eventConnectionRef\.current!\.maintain\(sid\)/);
   assert.match(chatWindowSource, /const hasStreamingContent = Boolean\(streamState\.streamingMessage\?\.content\.length\)/);
   assert.match(chatWindowSource, /streamState\.isStreaming && hasStreamingContent && streamState\.streamingMessage/);
-  assert.match(chatWindowSource, /agentRunning && !hasStreamingContent && agentPhase/);
+  assert.match(chatWindowSource, /agentRunning && agentPhase && \(!hasStreamingContent \|\| agentPhase\.kind === "running_tools"\)/);
   assert.match(chatWindowSource, /return null;/);
 });
 
@@ -280,7 +284,10 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
   assert.match(connectedSource, /agentRunningRef\.current = true/);
   assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatch\(\{ type: "snapshot", message: msg \}\)/);
   assert.match(streamSource, /event\.assistantMessageEvent as ClientAssistantMessageEvent/);
-  assert.match(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
+  assert.match(streamSource, /pendingDeltasRef\.current\.push\(delta\)/);
+  assert.match(streamSource, /requestAnimationFrame/);
+  assert.match(streamSource, /dispatch\(\{ type: "deltaBatch", events: deltas \}\)/);
+  assert.doesNotMatch(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
   assert.match(streamSource, /delta\.type !== "toolcall_start" && delta\.type !== "toolcall_delta"/);
   assert.doesNotMatch(streamSource, /case "message_delta"/);
   assert.match(messageEndSource, /const completed = event\.message as AgentMessage/);
@@ -298,7 +305,12 @@ test("shows the latest streamed tool execution progress in the running phase", (
   assert.match(updateSource, /getToolExecutionProgress\(event\.partialResult\)/);
   assert.match(updateSource, /tools: \[\.\.\.tools\.filter\([\s\S]*?, updated\]/);
   assert.match(chatWindowSource, /if \(latest\?\.progress\)/);
-  assert.match(chatWindowSource, /chat\.runningNamedTool[\s\S]*latest\.progress/);
+  // Terminal-style phase label: concrete detail/progress shown directly
+  // instead of the removed chat.runningNamedTool i18n key.
+  assert.match(
+    chatWindowSource,
+    /latest\?\.detail\) return latest\.detail[\s\S]*latest\?\.progress\) return `\$\{latest\.name\} \$\{latest\.progress\}`/,
+  );
 });
 
 test("plays the enabled sound once for each extension dialog", () => {
@@ -402,7 +414,7 @@ test("keeps prompt anchor measurement outside the React update cycle", () => {
   );
   assert.notEqual(anchorEffectStart, -1);
   const syncEffectStart = chatWindowSource.indexOf(
-    "useLayoutEffect(() => {\n    promptAnchorUpdateRef.current?.();",
+    "useLayoutEffect(() => {\n    // The prompt-anchor spacer height",
     anchorEffectStart,
   );
   assert.notEqual(syncEffectStart, -1);
@@ -426,7 +438,10 @@ test("keeps prompt anchor measurement outside the React update cycle", () => {
   assert.match(anchorLifecycleEffectSource, /if \(disposed \|\| promptAnchorMeasureFrameRef\.current !== null\) return/);
   assert.match(anchorLifecycleEffectSource, /promptAnchorMeasureFrameRef\.current = requestAnimationFrame\(\(\) => \{\s*promptAnchorMeasureFrameRef\.current = null;\s*updatePromptAnchorSpacer\(\)/);
   assert.match(anchorLifecycleEffectSource, /disposed = true;[\s\S]*?promptAnchorUpdateRef\.current === updatePromptAnchorSpacer[\s\S]*?cancelAnimationFrame\(promptAnchorMeasureFrameRef\.current\)/);
-  assert.match(anchorSyncEffectSource, /promptAnchorUpdateRef\.current\?\.\(\);\s*\}, \[streamState\.streamingMessage\]\)/);
+  // The streaming-frame update must run off the synchronous layout path: it
+  // defers to a rAF (coalescing with the ResizeObserver-driven measurement)
+  // instead of forcing a style recalc + layout read + spacer write per frame.
+  assert.match(anchorSyncEffectSource, /const update = promptAnchorUpdateRef\.current;[\s\S]*?requestAnimationFrame\(\(\) => \{\s*promptAnchorUpdateRef\.current\?\.\(\);\s*\}\);[\s\S]*?cancelAnimationFrame\(raf\)/);
   assert.match(chatWindowSource, /<div ref=\{messageContentRef\} style=\{\{/);
 });
 
@@ -445,4 +460,48 @@ test("keeps a detached viewport in place when streaming completes", () => {
   assert.match(scrollEffectSource, /!agentRunningRef\.current && isNearBottomRef\.current[\s\S]*?scrollToBottom\("auto"\)/);
   assert.doesNotMatch(scrollEffectSource, /\|\|/);
   assert.match(source, /addEventListener\("scroll", handleScrollPositionChange/);
+});
+test("routes the builtin /model command through get_state and set_model", () => {
+  const slashSource = source.slice(
+    source.indexOf("const handleBuiltinSlashCommand = useCallback"),
+    source.indexOf("// Let AgentSession.prompt decide"),
+  );
+  const modelSource = slashSource.slice(
+    slashSource.indexOf('case "model":'),
+    slashSource.indexOf("default: {"),
+  );
+
+  assert.match(modelSource, /type: "get_state"/);
+  assert.match(modelSource, /type: "set_model", provider, modelId/);
+});
+
+test("reloads session resources without the unsupported reload RPC command", () => {
+  const slashSource = source.slice(
+    source.indexOf("const handleBuiltinSlashCommand = useCallback"),
+    source.indexOf("// Let AgentSession.prompt decide"),
+  );
+  const reloadSource = slashSource.slice(
+    slashSource.indexOf('case "reload":'),
+    slashSource.indexOf('case "name":'),
+  );
+
+  assert.doesNotMatch(reloadSource, /sendAgentCommand/);
+  assert.match(reloadSource, /loadSession\(sid, false, true\)/);
+  assert.match(reloadSource, /loadTools\(sid\)/);
+  assert.match(reloadSource, /loadSlashCommands\(\)/);
+  assert.match(reloadSource, /loadModels\(\)/);
+});
+
+test("rejects unmapped slash commands with an explicit error", () => {
+  const slashSource = source.slice(
+    source.indexOf("const handleBuiltinSlashCommand = useCallback"),
+    source.indexOf("// Let AgentSession.prompt decide"),
+  );
+  const defaultSource = slashSource.slice(
+    slashSource.indexOf("default: {"),
+  );
+
+  assert.match(defaultSource, /startsWith\("skill:"\)/);
+  assert.match(defaultSource, /return \{ handled: false \};/);
+  assert.match(defaultSource, /handled: true, error: `Unknown command/);
 });

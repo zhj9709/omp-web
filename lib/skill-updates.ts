@@ -60,7 +60,7 @@ export function buildSkillUpdateArgs(install: SkillInstallInfo): string[] {
     skillNameFromPackage(install.package),
     "-y",
     "--agent",
-    "pi",
+    "omp",
   ];
   if (install.scope === "global") args.push("-g");
   return args;

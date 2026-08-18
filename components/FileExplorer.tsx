@@ -247,6 +247,7 @@ function TreeNode({
   const [loaded, setLoaded] = useState(node.loaded ?? false);
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const loadedTokenRef = useRef<string | null>(node.loaded ? refreshToken : null);
 
   const loadChildren = useCallback(async (force = false) => {
     if (loaded && !force) return;
@@ -255,12 +256,13 @@ function TreeNode({
       const entries = await fetchEntries(node.fullPath);
       setChildren(entries);
       setLoaded(true);
+      loadedTokenRef.current = refreshToken;
     } catch {
       // ignore
     } finally {
       setLoading(false);
     }
-  }, [loaded, node.fullPath]);
+  }, [loaded, node.fullPath, refreshToken]);
 
   // Re-fetch children when the tree refreshes and the directory is open.
   useEffect(() => {
@@ -274,11 +276,15 @@ function TreeNode({
     if (node.isDir) {
       const next = !open;
       onToggleExpanded(node.fullPath, next);
-      if (next && !loaded) loadChildren();
+      if (next && !loaded) {
+        loadChildren();
+      } else if (next && loadedTokenRef.current !== refreshToken) {
+        loadChildren(true);
+      }
     } else {
       onOpenFile(node.fullPath, node.name);
     }
-  }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded]);
+  }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded, refreshToken]);
 
   return (
     <div>

@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, type MouseEvent } from "react";
+import { memo, useMemo, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { encodeFilePathForApi } from "@/lib/file-paths";
-import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
+import { markdownPlainRehypePlugins, markdownRehypePlugins, markdownRemarkPlugins, markdownMayContainMath, normalizeDisplayMath } from "@/lib/markdown";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 
 interface MarkdownBodyProps {
@@ -15,7 +15,7 @@ interface MarkdownBodyProps {
   onOpenFile?: (filePath: string) => void;
 }
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
+export const MarkdownBody = memo(function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
@@ -88,15 +88,19 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     },
   }), [cwd, isStreaming, onOpenFile]);
 
+  const rehypePlugins = markdownMayContainMath(normalizedMarkdown)
+    ? markdownRehypePlugins
+    : markdownPlainRehypePlugins;
+
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
       <ReactMarkdown
         remarkPlugins={markdownRemarkPlugins}
-        rehypePlugins={markdownRehypePlugins}
+        rehypePlugins={rehypePlugins}
         components={components}
       >
         {normalizedMarkdown}
       </ReactMarkdown>
     </div>
   );
-}
+}, (prev, next) => prev.children === next.children && prev.isStreaming === next.isStreaming && prev.cwd === next.cwd && prev.className === next.className);

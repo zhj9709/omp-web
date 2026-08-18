@@ -406,8 +406,8 @@ function AddSkillPanel({
         results?: SkillSearchResult[];
         error?: string;
       };
-      if (d.error) {
-        setSearchError(d.error);
+      if (!res.ok || d.error) {
+        setSearchError(d.error ?? `HTTP ${res.status}`);
         return;
       }
       setResults(d.results ?? []);
@@ -449,8 +449,8 @@ function AddSkillPanel({
 
   const installPath =
     scope === "global"
-      ? "~/.pi/agent/skills/"
-      : `${shortenPath(cwd)}/.pi/skills/`;
+      ? "~/.omp/agent/managed-skills/"
+      : `${shortenPath(cwd)}/.agents/skills/`;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -739,6 +739,18 @@ export function SkillsConfig({
       if (!res.ok || d.error) throw new Error(d.error ?? `HTTP ${res.status}`);
       const list = d.skills ?? [];
       setSkills(list);
+      setUpdateStatuses((current) => {
+        const validKeys = new Set(
+          list.map(updateKey).filter((key): key is string => key !== null),
+        );
+        const next: Record<string, SkillUpdateResult> = {};
+        let pruned = false;
+        for (const [key, value] of Object.entries(current)) {
+          if (validKeys.has(key)) next[key] = value;
+          else pruned = true;
+        }
+        return pruned ? next : current;
+      });
       setProjectResourcesLoaded(d.projectResourcesLoaded ?? true);
       if (list.length > 0 && !selected) {
         const initialSkill = list.find((skill) => !skill.disableModelInvocation) ?? list[0];

@@ -226,7 +226,7 @@ function layoutNodes(allNodes: NodeInfo[], minimapHeight: number): NodeLayout {
   };
 }
 
-export function ChatMinimap({
+export const ChatMinimap = memo(function ChatMinimap({
   messages,
   streamingMessage,
   scrollContainer,
@@ -240,6 +240,8 @@ export function ChatMinimap({
   const [minimapHovered, setMinimapHovered] = useState(false);
   const [mouseYRatio, setMouseYRatio] = useState<number | null>(null);
   const draggingRef = useRef(false);
+  const dragRectRef = useRef<DOMRect | null>(null);
+  const jumpToPointerRef = useRef<(clientY: number, behavior: ScrollBehavior) => void>(() => {});
   const containerRef = useRef<HTMLDivElement>(null);
   const allNodesRef = useRef<NodeInfo[]>([]);
   const nodeLayoutRef = useRef<NodeLayout>({
@@ -493,6 +495,34 @@ export function ChatMinimap({
     }
     return nearestNode;
   }, []);
+  // Fresh per-render jump helper so the global drag listeners always use the
+  // latest node layout and scroll callbacks without re-registering handlers.
+  jumpToPointerRef.current = (clientY: number, behavior: ScrollBehavior) => {
+    const rect = dragRectRef.current;
+    if (!rect) return;
+    const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const node = findNearestNode(ratio);
+    if (node) scrollToNode(node, behavior);
+  };
+
+  // Register global drag listeners once; dragging state is tracked via refs so
+  // releasing the mouse outside the window still ends the drag (no leak).
+  useEffect(() => {
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!draggingRef.current) return;
+      jumpToPointerRef.current(moveEvent.clientY, "auto");
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
 
   const scrollToHeading = useCallback((
     node: NodeInfo,
@@ -554,29 +584,11 @@ export function ChatMinimap({
     draggingRef.current = true;
     showPreview();
     const rect = event.currentTarget.getBoundingClientRect();
+    dragRectRef.current = rect;
     const pointerRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
     setMouseYRatio(pointerRatio);
-    const jumpToPointer = (clientY: number, behavior: ScrollBehavior) => {
-      const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-      const node = findNearestNode(ratio);
-      if (node) {
-        scrollToNode(node, behavior);
-      }
-    };
-
-    jumpToPointer(event.clientY, "smooth");
-    const onMove = (moveEvent: MouseEvent) => {
-      if (!draggingRef.current) return;
-      jumpToPointer(moveEvent.clientY, "auto");
-    };
-    const onUp = () => {
-      draggingRef.current = false;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }, [findNearestNode, scrollToNode, showPreview, visible]);
+    jumpToPointerRef.current(event.clientY, "smooth");
+  }, [showPreview, visible]);
 
   const nearestNode = mouseYRatio === null ? null : findNearestNode(mouseYRatio);
   const nearestNodeIndex = nearestNode?.index ?? null;
@@ -742,11 +754,25 @@ export function ChatMinimap({
       )}
     </div>
   );
-}
+}, (prev, next) => {
+  // Ignore `streamingMessage` identity changes: during streaming the bubble
+  // updates every frame, but minimap nodes are re-measured from the DOM on a
+  // 150ms throttle (ResizeObserver / scroll / message-count effects), so a
+  // per-frame re-render here only burns the main thread. The message list and
+  // the stable ref/callback props are what actually change node layout.
+  return prev.messages === next.messages
+    && prev.scrollContainer === next.scrollContainer
+    && prev.messageRefs === next.messageRefs
+    && prev.onRevealHistory === next.onRevealHistory;
+});
 
 // Hook to create a stable array of refs for messages
 export function useMessageRefs(count: number): RefObject<(HTMLDivElement | null)[]> {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
-  refs.current = Array(count).fill(null).map((_, i) => refs.current[i] ?? null);
+  // Rebuild only when the count changes; unrelated re-renders keep the same
+  // array identity so React does not re-diff the message list.
+  if (refs.current.length !== count) {
+    refs.current = Array.from({ length: count }, (_, i) => refs.current[i] ?? null);
+  }
   return refs;
 }

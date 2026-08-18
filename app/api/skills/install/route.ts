@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@/lib/session-reader";
 import { runNpx } from "@/lib/npx";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
@@ -9,7 +9,13 @@ export const dynamic = "force-dynamic";
 
 const ANSI_RE = /\x1B\[[0-9;]*m/g;
 
-// POST /api/skills/install  body: { package: string; scope: "global" | "project"; cwd?: string }
+/**
+ * POST /api/skills/install  body: { package: string; scope: "global" | "project"; cwd?: string }
+ *
+ * Installs skills via `npx skills add`. Uses `--agent omp` (not pi) to match
+ * the OMP runtime. Project-scoped installs require the cwd to be in the allowed
+ * roots.
+ */
 export async function POST(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
@@ -36,7 +42,7 @@ export async function POST(req: Request) {
         );
       }
     }
-    const args = ["skills", "add", pkg.trim(), "-y", "--agent", "pi"];
+    const args = ["skills", "add", pkg.trim(), "-y", "--agent", "omp"];
     if (isGlobal) args.push("-g");
 
     console.log(`[skills/install] running: npx ${args.join(" ")}`);

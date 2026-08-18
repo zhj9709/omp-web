@@ -1415,3 +1415,78 @@ span.token.table {
     font-size: 16px !important;
   }
 }
+
+/* ── Chat waiting-phase indicator (TUI-style) ──────────────────────────── */
+
+/* Marquee shimmer: a light sweep travels across the label like the pi TUI's
+   status line. The gradient is fixed to the text's own box so it reads as
+   color flowing left→right rather than the text moving. */
+@keyframes chat-wait-shimmer {
+  0% { background-position: 200% 50%; }
+  100% { background-position: -200% 50%; }
+}
+
+.chat-wait-label {
+  background: linear-gradient(
+    100deg,
+    var(--text-muted) 0%,
+    var(--text-muted) 35%,
+    var(--accent, #7aa2f7) 50%,
+    var(--text-muted) 65%,
+    var(--text-muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: chat-wait-shimmer 2.4s linear infinite;
+  /* Soften the transparent-text flicker before the first paint of the gradient. */
+  min-height: 1em;
+}
+
+/* Square spinner: a rotating square outline with a marquee light running
+   around its border (TUI-style "busy" glyph). Two stacked animations on one
+   element: the box rotates while a conic-gradient "comet" sweeps the border. */
+@keyframes chat-wait-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes chat-wait-border-marquee {
+  to { --chat-wait-angle: 360deg; }
+}
+
+/* Register the custom property so it animates smoothly. */
+@property --chat-wait-angle {
+  syntax: "<angle>";
+ inherits: false;
+ initial-value: 0deg;
+}
+
+.chat-wait-spinner {
+  --chat-wait-angle: 0deg;
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  border: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+  /* The comet: a conic sweep masked to the border ring, rotating around the
+     square's perimeter as the whole square itself spins. */
+  background:
+    conic-gradient(from var(--chat-wait-angle), currentColor 0deg, currentColor 70deg, transparent 110deg, transparent 360deg)
+    border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation:
+    chat-wait-spin 2.2s linear infinite,
+    chat-wait-border-marquee 1.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-wait-label { animation: none; color: var(--text-muted); background: none; }
+  .chat-wait-spinner { animation-duration: 6s, 3s; }
+}

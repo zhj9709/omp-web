@@ -1,58 +1,84 @@
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
+import { getOmpModelsYamlPath } from "./omp-models";
 
 export interface ModelDiscoveryAuth {
   apiKey?: string;
   headers: Record<string, string>;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function stringRecord(value: unknown): Record<string, string> {
-  if (!isRecord(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
 
-export async function resolveModelDiscoveryAuth(
+/**
+ * Read the stored API key for a provider from models.yaml (server-side only).
+ * NEVER returned to the client — used only to make an authenticated upstream request.
+ */
+function readStoredProviderApiKey(providerName: string): string | undefined {
+  const path = getOmpModelsYamlPath();
+  if (!existsSync(path)) return undefined;
+
+  try {
+    const raw = readFileSync(path, "utf-8");
+    // models.yaml providers.<name>.apiKey — parse conservatively with a regex
+    // to avoid pulling in a YAML dependency for one field. Every line after the
+    // provider declaration must be indented, so the scan can never jump into a
+    // later provider block (a sibling `b:` line has no leading whitespace).
+    const escaped = providerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = raw.match(
+      new RegExp(`^\\s*${escaped}:\\s*\\r?\\n(?:[ \\t]+[^\\n]*\\r?\\n)*?[ \\t]+apiKey:\\s*["']?([^"'\\n]+)`, "m"),
+    );
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read the configured baseUrl for a provider from models.yaml (server-side
+ * only). Used to verify that a discovery request carrying a *stored* API key
+ * targets the provider's own endpoint, never an arbitrary caller-supplied URL.
+ */
+export function readStoredProviderBaseUrl(providerName: string): string | undefined {
+  const path = getOmpModelsYamlPath();
+  if (!existsSync(path)) return undefined;
+
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const escaped = providerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = raw.match(
+      new RegExp(`^\\s*${escaped}:\\s*\\r?\\n(?:[ \\t]+[^\\n]*\\r?\\n)*?[ \\t]+baseUrl:\\s*["']?([^"'\\n]+)`, "m"),
+    );
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the auth (API key + headers) for an upstream model-list request.
+ * Uses the key from the request body first, falling back to models.yaml.
+ * The API key is used only server-side and never returned in a response.
+ */
+export function resolveModelDiscoveryAuth(
   providerName: string,
   provider: Record<string, unknown>,
-): Promise<ModelDiscoveryAuth> {
-  let tempDir: string | undefined;
-  try {
-    tempDir = mkdtempSync(join(tmpdir(), "pi-web-model-discovery-"));
-    const modelsPath = join(tempDir, "models.json");
-    const discoveryModelId = "__pi_web_model_discovery__";
-    writeFileSync(modelsPath, JSON.stringify({
-      providers: {
-        [providerName]: {
-          ...provider,
-          models: [{ id: discoveryModelId }],
-        },
-      },
-    }, null, 2), "utf8");
+): ModelDiscoveryAuth {
+  const bodyKey =
+    typeof provider.apiKey === "string" && provider.apiKey.trim()
+      ? provider.apiKey.trim()
+      : undefined;
+  const apiKey = bodyKey ?? readStoredProviderApiKey(providerName);
 
-    const modelRuntime = await ModelRuntime.create({ modelsPath });
-    const loadError = modelRuntime.getError();
-    if (loadError) throw new Error(loadError);
-    const model = modelRuntime.getModel(providerName, discoveryModelId);
-    if (!model) throw new Error(`Unable to load provider "${providerName}"`);
-
-    const resolved = await modelRuntime.getAuth(model);
-    if (resolved) {
-      return {
-        apiKey: resolved.auth.apiKey,
-        headers: stringRecord(resolved.auth.headers),
-      };
-    }
-
-    return {
-      headers: stringRecord(modelRuntime.getCompatibilityRequestConfig(model).headers),
-    };
-  } finally {
-    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
-  }
+  return {
+    ...(apiKey ? { apiKey } : {}),
+    headers: stringRecord(provider.headers),
+  };
 }

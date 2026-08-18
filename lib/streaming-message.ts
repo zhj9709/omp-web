@@ -17,6 +17,7 @@ export type StreamAction =
   | { type: "start" }
   | { type: "snapshot"; message: AgentMessage }
   | { type: "delta"; event: ClientAssistantMessageEvent }
+  | { type: "deltaBatch"; events: ClientAssistantMessageEvent[] }
   | { type: "end" };
 
 export const INITIAL_STREAMING_STATE: StreamingState = {
@@ -136,6 +137,11 @@ export function streamReducer(
     }
     case "delta":
       return applyDelta(state, action.event);
+    case "deltaBatch": {
+      let next = state;
+      for (const event of action.events) next = applyDelta(next, event);
+      return next;
+    }
     case "end":
       return INITIAL_STREAMING_STATE;
     default:

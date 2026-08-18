@@ -8,11 +8,16 @@ import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, saveFileViewerState } from "./file-tab-state";
-import { ModelsConfig } from "./ModelsConfig";
-import { SkillsConfig } from "./SkillsConfig";
-import { PluginsConfig } from "./PluginsConfig";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
+import dynamic from "next/dynamic";
+
+// Settings/config panels mount only when opened — keep their bundles (model
+// provider icons are the heaviest) out of the chat first paint.
+const ModelsConfig = dynamic(() => import("./ModelsConfig").then((m) => m.ModelsConfig));
+const SkillsConfig = dynamic(() => import("./SkillsConfig").then((m) => m.SkillsConfig));
+const PluginsConfig = dynamic(() => import("./PluginsConfig").then((m) => m.PluginsConfig));
+const CollabConfig = dynamic(() => import("./CollabConfig").then((m) => m.CollabConfig));
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -101,6 +106,7 @@ export function AppShell() {
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
+  const [collabConfigOpen, setCollabConfigOpen] = useState(false);
   const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
@@ -811,11 +817,9 @@ export function AppShell() {
   }, [handleOpenFile, selectedSession?.id]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
-    setFileTabs((prev) => {
-      const next = prev.filter((t) => t.id !== tabId);
-      if (next.length === 0) setRightPanelOpen(false);
-      return next;
-    });
+    const next = fileTabs.filter((t) => t.id !== tabId);
+    if (next.length === 0) setRightPanelOpen(false);
+    setFileTabs(next);
     setActiveFileTabId((cur) => {
       if (cur !== tabId) return cur;
       const remaining = fileTabs.filter((t) => t.id !== tabId);
@@ -823,13 +827,23 @@ export function AppShell() {
     });
   }, [fileTabs]);
 
-  const handleViewFullHistory = useCallback(() => {
+  const handleViewFullHistory = useCallback(async () => {
     if (!selectedSession) return;
-    window.open(
-      `/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`,
-      "_blank",
-      "noopener,noreferrer",
-    );
+    const exportUrl = `/api/sessions/${encodeURIComponent(selectedSession.id)}/export`;
+    // Pre-flight the export endpoint: a 404/500 would otherwise navigate the
+    // browser to a bare JSON error page. On success the browser saves the
+    // attachment (Content-Disposition) instead of rendering it.
+    try {
+      const res = await fetch(exportUrl, { method: "HEAD" });
+      if (!res.ok) {
+        console.error(`Session export failed (HTTP ${res.status})`);
+        return;
+      }
+    } catch (err) {
+      console.error("Session export failed:", err);
+      return;
+    }
+    window.location.assign(exportUrl);
   }, [selectedSession]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
@@ -892,7 +906,7 @@ export function AppShell() {
 
   const activeFileTab = fileTabs.find((tab) => tab.id === activeFileTabId) ?? null;
   const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
-  const windowTitle = activeCwdName ? `${activeCwdName} - Pi Web` : "Pi Web";
+  const windowTitle = activeCwdName ? `${activeCwdName} - OMP Web` : "OMP Web";
 
   useEffect(() => {
     const syncWindowTitle = () => {
@@ -964,6 +978,19 @@ export function AppShell() {
                 <path d="M15 7V2" />
                 <path d="M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0Z" />
                 <path d="M12 19v3" />
+              </svg>
+            ),
+          },
+          {
+            label: translate("collab.title"),
+            onClick: () => setCollabConfigOpen(true),
+            disabled: false,
+            icon: (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="9" cy="9" r="2" />
+                <circle cx="17" cy="9" r="2" />
+                <circle cx="13" cy="17" r="2" />
+                <path d="M7.5 10.5 10 12M14 12l2.5-1.5M10 16l3-2M12 15l-1 2" />
               </svg>
             ),
           },
@@ -2268,6 +2295,13 @@ export function AppShell() {
         sessionId={selectedSession?.id ?? null}
         onClose={() => setPluginsConfigOpen(false)}
         onReloaded={() => setSessionKey((k) => k + 1)}
+      />
+    )}
+    {collabConfigOpen && (
+      <CollabConfig
+        sessionId={selectedSession && !selectedSession.transient ? selectedSession.id : null}
+        sessionName={selectedSession?.name ?? null}
+        onClose={() => setCollabConfigOpen(false)}
       />
     )}
     </>

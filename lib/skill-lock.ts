@@ -93,7 +93,11 @@ function getInstallInfo(
   const sourceType = typeof entry.sourceType === "string" ? entry.sourceType : undefined;
   const source = normalizeSource(entry.source.trim(), sourceType);
   if (!source) return undefined;
-  const skillPath = typeof entry.skillPath === "string" ? entry.skillPath : undefined;
+  const skillPath =
+    typeof entry.skillPath === "string" && entry.skillPath.trim()
+      ? entry.skillPath
+      : undefined;
+  if (!skillPath) return undefined;
   const ref = typeof entry.ref === "string" ? entry.ref : undefined;
   const rawVersionHash = scope === "global" ? entry.skillFolderHash : entry.computedHash;
   const versionHash = typeof rawVersionHash === "string" && rawVersionHash
@@ -130,14 +134,14 @@ export function annotateSkillsWithInstallInfo(
   const globalEntries = readSkillLock(globalLockPath);
   const projectEntries = readSkillLock(projectLockPath);
   const globalSkillsRoot = join(agentDir, "skills");
+  const managedSkillsRoot = join(agentDir, "managed-skills");
   const projectSkillsRoot = join(cwd, ".pi", "skills");
+  const ompProjectSkillsRoot = join(cwd, ".agents", "skills");
 
   return skills.map((skill) => {
-    if (!existsSync(skill.filePath)) return skill;
-
-    const install = isWithin(skill.filePath, globalSkillsRoot)
+    const install = isWithin(skill.filePath, globalSkillsRoot) || isWithin(skill.filePath, managedSkillsRoot)
       ? getInstallInfo(globalEntries, skill.name, "global")
-      : isWithin(skill.filePath, projectSkillsRoot)
+      : isWithin(skill.filePath, projectSkillsRoot) || isWithin(skill.filePath, ompProjectSkillsRoot)
         ? getInstallInfo(projectEntries, skill.name, "project")
         : undefined;
 

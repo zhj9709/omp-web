@@ -1,6 +1,6 @@
 import { isToolPreset, type ToolPreset } from "./tool-presets";
 
-const STORAGE_KEY = "pi-tool-preset";
+const STORAGE_KEY = "omp-tool-preset";
 
 interface StorageLike {
   getItem(key: string): string | null;

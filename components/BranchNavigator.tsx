@@ -265,8 +265,15 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
     update();
     const ro = new ResizeObserver(update);
     ro.observe(anchor);
-    return () => ro.disconnect();
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update, { passive: true });
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
   }, [open, inline, containerRef]);
+
 
   const activePathIds = useMemo(
     () => buildActivePath(tree, activeLeafId),

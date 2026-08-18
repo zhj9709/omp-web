@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { resolveModelDiscoveryAuth } from "@/lib/model-discovery-auth";
+import {
+  hasJsonContentType,
+  isApiRequestAllowed,
+} from "@/lib/request-security";
+import { resolveModelDiscoveryAuth, readStoredProviderBaseUrl } from "@/lib/model-discovery-auth";
 import { buildModelsListUrl, parseDiscoveredModels } from "@/lib/model-discovery";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +35,13 @@ function buildHeaders(api: string, apiKey: string | undefined, configured: Recor
 }
 
 export async function POST(req: Request) {
+  if (!isApiRequestAllowed(req)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+  if (!hasJsonContentType(req)) {
+    return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
+  }
+
   try {
     const body = await req.json() as { providerName?: unknown; provider?: unknown };
     const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
@@ -51,8 +62,25 @@ export async function POST(req: Request) {
     }
 
     const auth = await resolveModelDiscoveryAuth(providerName, body.provider);
-    if (typeof body.provider.apiKey === "string" && body.provider.apiKey.trim() && !auth.apiKey) {
+    const hasBodyKey = typeof body.provider.apiKey === "string" && body.provider.apiKey.trim().length > 0;
+    if (hasBodyKey && !auth.apiKey) {
       return NextResponse.json({ error: `No API key found for "${providerName}"` }, { status: 400 });
+    }
+
+    // A *stored* API key must only ever travel to the provider's configured
+    // endpoint. Caller-supplied keys (explicitly provided in the request body)
+    // may target any base URL the user is testing.
+    if (!hasBodyKey && auth.apiKey) {
+      const storedBaseUrl = readStoredProviderBaseUrl(providerName);
+      if (
+        storedBaseUrl
+        && storedBaseUrl.trim().replace(/\/+$/, "").toLowerCase()
+          !== baseUrl.trim().replace(/\/+$/, "").toLowerCase()
+      ) {
+        return NextResponse.json({
+          error: `Base URL does not match the configured endpoint for "${providerName}"`,
+        }, { status: 403 });
+      }
     }
 
     const response = await fetch(endpoint, {

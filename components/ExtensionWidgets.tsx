@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { memo, useEffect, useId, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import type { ExtensionWidgetItem } from "@/lib/types";
 
@@ -45,7 +45,7 @@ export function getNextExpandedWidgetKey(
   return currentKey === requestedKey ? null : requestedKey;
 }
 
-export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }) {
+export const ExtensionWidgets = memo(function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }) {
   const { t } = useI18n();
   const idPrefix = useId();
   const previousContentsRef = useRef<Map<string, string[]> | null>(null);
@@ -58,6 +58,13 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
   );
 
   useEffect(() => {
+    setExpandedWidgetKey((current) => {
+      const stillExpandable = current !== null && widgets.some(
+        (widget) => widget.key === current && widget.lines.length > 1,
+      );
+      return stillExpandable ? current : getDefaultExpandedWidgetKey(widgets);
+    });
+
     const nextContents = snapshotExtensionWidgetContents(widgets);
     const updatedKeys = getUpdatedExtensionWidgetKeys(
       previousContentsRef.current,
@@ -204,4 +211,4 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
       </div>
     </>
   );
-}
+});

@@ -1,13 +1,24 @@
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { buildApiKeyProviderList } from "@/lib/provider-listing";
-import { collectProviderListingInputs } from "@/lib/provider-listing-runtime";
+import { getOmpProviders } from "@/lib/omp-models";
 
 export const dynamic = "force-dynamic";
 
-// Providers that accept an API key, including dual-auth ones such as anthropic —
-// see lib/provider-listing.ts for why membership is capability-based (#309).
+/**
+ * Providers that accept an API key.
+ * OMP stores API key config in models.yaml. Providers listed here have
+ * entries in models.yaml with an apiKey field.
+ */
 export async function GET() {
-  const modelRuntime = await ModelRuntime.create();
-  const providers = buildApiKeyProviderList(await collectProviderListingInputs(modelRuntime));
-  return Response.json({ providers });
+  const providers = getOmpProviders();
+  const apiKeyProviders = providers
+    .filter((p) => p.hasApiKeyLogin)
+    .map((p) => ({
+      id: p.id,
+      displayName: p.name,
+      configured: true, // Exists in models.yaml → has an API key configured
+      source: "models_yaml",
+      modelCount: p.modelCount,
+      supportsOAuth: false,
+    }));
+
+  return Response.json({ providers: apiKeyProviders });
 }

@@ -42,8 +42,17 @@ function versionSummary(pkg: PluginPackageInfo, t: ReturnType<typeof useI18n>["t
 
 function installLocation(scope: PluginScope, cwd: string): string {
   return scope === "project"
-    ? `${shortenPath(cwd)}/.pi/agent/{npm,git}`
-    : "~/.pi/agent/{npm,git}";
+    ? `${shortenPath(cwd)}/.omp/agent/{npm,git}`
+    : "~/.omp/agent/{npm,git}";
+}
+
+function normalizePackageSource(value: string): string {
+  return value
+    .trim()
+    .replace(/^npm:/, "")
+    .replace(/^git\+/, "")
+    .replace(/\.git$/, "")
+    .toLowerCase();
 }
 
 function findInstalledPackage(
@@ -51,11 +60,10 @@ function findInstalledPackage(
   source: string,
   scope: PluginScope,
 ): PluginPackageInfo | undefined {
-  const trimmed = source.trim();
-  const withoutNpmPrefix = trimmed.startsWith("npm:") ? trimmed.slice(4) : trimmed;
-  return packages.find((pkg) => pkg.scope === scope && pkg.source === trimmed)
-    ?? packages.find((pkg) => pkg.scope === scope && pkg.source === `npm:${withoutNpmPrefix}`)
-    ?? packages.find((pkg) => pkg.scope === scope && pkg.source.endsWith(trimmed));
+  const normalized = normalizePackageSource(source);
+  return packages.find(
+    (pkg) => pkg.scope === scope && normalizePackageSource(pkg.source) === normalized,
+  );
 }
 
 function statusColor(status: PluginPackageInfo["status"]): string {
@@ -687,13 +695,13 @@ export function PluginsConfig({
       if (action === "remove") {
         setSelected(next.packages[0] ? packageKey(next.packages[0]) : null);
         if (next.packages.length === 0) setAddMode(true);
-        setActionMessage("Package removed.");
+        setActionMessage(t("i18n.packageRemoved"));
       } else {
         const messages: Record<Exclude<PluginAction, "remove">, string> = {
-          install: "Package installed.",
-          update: "Package updated.",
-          disable: "Package disabled.",
-          enable: "Package enabled.",
+          install: t("i18n.packageInstalled"),
+          update: t("i18n.packageUpdated"),
+          disable: t("i18n.packageDisabled"),
+          enable: t("i18n.packageEnabled"),
         };
         setActionMessage(messages[action]);
       }
@@ -702,7 +710,7 @@ export function PluginsConfig({
     } finally {
       setBusyKey(null);
     }
-  }, [cwd]);
+  }, [cwd, t]);
 
   const installPlugin = useCallback(async () => {
     const source = normalizePluginSourceInput(installSource).trim();
@@ -725,13 +733,13 @@ export function PluginsConfig({
       setSelected(installed ? packageKey(installed) : key);
       setAddMode(false);
       setInstallSource("");
-      setActionMessage("Package installed.");
+      setActionMessage(t("i18n.packageInstalled"));
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyKey(null);
     }
-  }, [cwd, installScope, installSource]);
+  }, [cwd, installScope, installSource, t]);
 
   const reloadSession = useCallback(async () => {
     if (!sessionId) return;
@@ -742,13 +750,13 @@ export function PluginsConfig({
       await sendAgentCommand(sessionId, { type: "reload" });
       onReloaded?.();
       await loadPlugins();
-      setActionMessage("Session reloaded.");
+      setActionMessage(t("i18n.sessionReloaded"));
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyKey(null);
     }
-  }, [loadPlugins, onReloaded, sessionId]);
+  }, [loadPlugins, onReloaded, sessionId, t]);
 
   const addBusy = busyKey?.startsWith("install:") ?? false;
 
@@ -856,7 +864,7 @@ export function PluginsConfig({
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
               {loading ? (
                 <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>
-                  Loading...
+                  {t("i18n.loading")}
                 </div>
               ) : error ? (
                 <div style={{ padding: "10px 8px", fontSize: 11, color: "#ef4444" }}>
@@ -864,7 +872,7 @@ export function PluginsConfig({
                 </div>
               ) : packages.length === 0 ? (
                 <div style={{ padding: "10px 8px", fontSize: 11, color: "var(--text-dim)" }}>
-                  No plugins configured
+                  {t("i18n.noPlugins")}
                 </div>
               ) : (
                 groupedPackages.map((group) => (

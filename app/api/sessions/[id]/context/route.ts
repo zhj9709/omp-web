@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
+import { resolveSessionPath, buildSessionContext, getSessionEntries } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { computeLeafId } from "@/lib/session-tree";
 
 export async function GET(
   req: Request,
@@ -16,13 +16,14 @@ export async function GET(
   try {
     const rpc = getRpcSession(id);
     const liveRpc = rpc?.isAlive() ? rpc : undefined;
-    const filePath = liveRpc ? null : await resolveSessionPath(id);
-    if (!liveRpc && !filePath) {
+    const filePath = liveRpc?.sessionFile || await resolveSessionPath(id);
+    if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    const sm = liveRpc?.inner.sessionManager ?? SessionManager.open(filePath!);
-    const context = buildSessionContext(sm.getEntries() as never, leafId, {
+    const entries = getSessionEntries(filePath);
+    const effectiveLeafId = leafId ?? computeLeafId(entries) ?? undefined;
+    const context = buildSessionContext(entries as never, effectiveLeafId, {
       deferThinking,
       deferToolResultImages,
     });

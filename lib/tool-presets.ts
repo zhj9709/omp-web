@@ -40,3 +40,13 @@ export function getToolNamesForPreset(preset: ToolPreset): string[] {
   if (preset === "full") return [...PRESET_FULL];
   return [...PRESET_DEFAULT];
 }
+
+/**
+ * Whether a requested tool set cannot be honored by OMP RPC. OMP has no
+ * per-session tool filter (see `set_tools` in lib/rpc-manager.ts), so any
+ * request that would remove a baseline read/write tool is "restrictive" and
+ * must be surfaced as `capability_unavailable` rather than silently ignored.
+ */
+export function isRestrictiveToolRequest(toolNames: string[]): boolean {
+  return !PRESET_DEFAULT.every((name) => toolNames.includes(name));
+}

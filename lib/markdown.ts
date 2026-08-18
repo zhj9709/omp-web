@@ -328,11 +328,6 @@ export const markdownRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
   [remarkGfm, remarkGfmOptions],
   remarkMath,
 ];
-export const markdownPreviewRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
-  [remarkFrontmatter, ["yaml"]],
-  [remarkGfm, remarkGfmOptions],
-  remarkMath,
-];
 
 export const markdownRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
@@ -340,8 +335,24 @@ export const markdownRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   [rehypeKatex, { throwOnError: false, strict: false }],
 ];
 
-export const markdownPreviewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
+// The preview surfaces (file viewer, minimap outline) parse the same markdown
+// dialect; alias the shared arrays instead of duplicating them.
+export const markdownPreviewRemarkPlugins = markdownRemarkPlugins;
+export const markdownPreviewRehypePlugins = markdownRehypePlugins;
+
+// KaTeX-free variants for content with no math delimiters: chat bodies are
+// overwhelmingly prose/code, and rehype-katex pulls the whole katex bundle
+// (~800KB) into the parse path of every message without this split.
+export const markdownPlainRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
-  [rehypeKatex, { throwOnError: false, strict: false }],
 ];
+
+/**
+ * Cheap delimiter probe: is there any chance this markdown contains math?
+ * False positives are fine (falls back to the katex pipeline); false
+ * negatives would drop formulas, so match generously.
+ */
+export function markdownMayContainMath(text: string): boolean {
+  return /\$[^$\n]+\$/.test(text) || text.includes("$$") || /\\[([]/.test(text);
+}

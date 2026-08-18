@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   subagentIsActive,
   type SubagentInfo,
@@ -179,7 +179,7 @@ function TranscriptView({
   );
 }
 
-export function SubagentRoster({
+export const SubagentRoster = memo(function SubagentRoster({
   subagents,
   unavailable = false,
   onRefresh,
@@ -195,6 +195,7 @@ export function SubagentRoster({
   const [transcript, setTranscript] = useState<SubagentTranscript | null>(null);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
 
   const activeCount = subagents.filter(subagentIsActive).length;
 
@@ -202,6 +203,7 @@ export function SubagentRoster({
     setOpen(false);
     setSelectedId(null);
     setTranscript(null);
+    setLoadingTranscript(false);
   }, []);
 
   useEffect(() => {
@@ -211,6 +213,20 @@ export function SubagentRoster({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [open, close]);
+
+  // Auto-hide when the user clicks outside the toggle button or the panel.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (buttonRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      close();
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
   }, [open, close]);
 
   useEffect(() => {
@@ -227,6 +243,7 @@ export function SubagentRoster({
       });
     return () => {
       cancelled = true;
+      setLoadingTranscript(false);
     };
   }, [open, selectedId, loadTranscript]);
 
@@ -235,6 +252,7 @@ export function SubagentRoster({
   return (
     <>
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => (open ? close() : setOpen(true))}
         aria-label="Subagents"
@@ -305,6 +323,7 @@ export function SubagentRoster({
               onClose={() => {
                 setSelectedId(null);
                 setTranscript(null);
+                setLoadingTranscript(false);
               }}
             />
           ) : (
@@ -446,4 +465,4 @@ export function SubagentRoster({
       )}
     </>
   );
-}
+});
