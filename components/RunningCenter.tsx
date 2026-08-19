@@ -6,28 +6,6 @@ import type { SessionInfo } from "@/lib/types";
 
 const POLL_MS = 2500;
 
-const LOCALE_TEXT = {
-  en: {
-    runningCenter: "Running Tasks",
-    noRunning: "No running tasks",
-    refresh: "Refresh",
-    totalRunning: "Total running: {count}",
-    justNow: "just now",
-    minutesAgo: "{n}m ago",
-    hoursAgo: "{n}h ago",
-    daysAgo: "{n}d ago",
-  },
-  "zh-CN": {
-    runningCenter: "运行中任务",
-    noRunning: "无运行中任务",
-    refresh: "刷新",
-    totalRunning: "共 {count} 个运行中",
-    justNow: "刚刚",
-    minutesAgo: "{n} 分钟前",
-    hoursAgo: "{n} 小时前",
-    daysAgo: "{n} 天前",
-  },
-} as const;
 
 interface RunningSession {
   id: string;
@@ -39,25 +17,22 @@ interface RunningSession {
 export interface RunningCenterProps {
   onOpenSession: (id: string) => void;
 }
-
-function formatRelativeTime(dateStr: string, locale: "en" | "zh-CN"): string {
-  const t = LOCALE_TEXT[locale];
+function formatRelativeTime(dateStr: string, t: (key: string, params?: Record<string, string | number>) => string): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
   const mins = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  if (mins < 1) return t.justNow;
-  if (mins < 60) return t.minutesAgo.replace("{n}", String(mins));
-  if (hours < 24) return t.hoursAgo.replace("{n}", String(hours));
-  if (days < 7) return t.daysAgo.replace("{n}", String(days));
+  if (mins < 1) return t("running.justNow");
+  if (mins < 60) return t("running.minutesAgo", { n: mins });
+  if (hours < 24) return t("running.hoursAgo", { n: hours });
+  if (days < 7) return t("running.daysAgo", { n: days });
   return date.toLocaleDateString();
 }
 
 export function RunningCenter({ onOpenSession }: RunningCenterProps) {
-  const { locale } = useI18n();
-  const t = LOCALE_TEXT[locale] ?? LOCALE_TEXT.en;
+  const { t } = useI18n();
 
   const [open, setOpen] = useState(false);
   const [runningSessions, setRunningSessions] = useState<RunningSession[]>([]);
@@ -193,7 +168,7 @@ export function RunningCenter({ onOpenSession }: RunningCenterProps) {
       <button
         ref={buttonRef}
         onClick={() => setOpen((prev) => !prev)}
-        title={t.runningCenter}
+        title={t("running.runningCenter")}
         aria-expanded={open}
         style={{
           display: "inline-flex",
@@ -318,7 +293,7 @@ export function RunningCenter({ onOpenSession }: RunningCenterProps) {
                         {s.cwd}
                       </span>
                       <span style={{ flexShrink: 0 }}>
-                        {formatRelativeTime(s.created, locale)}
+                        {formatRelativeTime(s.created, t)}
                       </span>
                     </div>
                   </button>
@@ -336,11 +311,11 @@ export function RunningCenter({ onOpenSession }: RunningCenterProps) {
                 }}
               >
                 <span>
-                  {t.totalRunning.replace("{count}", String(count))}
+                  {t("running.totalRunning", { count })}
                 </span>
                 <button
                   onClick={() => void pollRef.current()}
-                  title={t.refresh}
+                  title={t("running.refresh")}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -362,7 +337,7 @@ export function RunningCenter({ onOpenSession }: RunningCenterProps) {
                       "var(--text-muted)";
                   }}
                 >
-                  {t.refresh}
+                  {t("running.refresh")}
                 </button>
               </div>
             </>
@@ -375,7 +350,7 @@ export function RunningCenter({ onOpenSession }: RunningCenterProps) {
                 fontSize: "13px",
               }}
             >
-              {t.noRunning}
+              {t("running.noRunning")}
             </div>
           )}
         </div>

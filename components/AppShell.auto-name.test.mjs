@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const source = fs.readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
+// Top-bar code (including the auto-name button) lives in TopBar.tsx since the
+// AppShell split; assert against the concatenation so structural invariants
+// follow the code regardless of which file hosts it.
+const source = fs.readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8")
+  + "\n" + fs.readFileSync(new URL("./TopBar.tsx", import.meta.url), "utf8");
 
 test("压缩后的会话仍可根据持久化消息数生成标题", () => {
   assert.match(

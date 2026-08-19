@@ -9,26 +9,6 @@ import type { ProjectMemory, WorkingMemoryEntry } from "@/lib/memory-service";
 /* Locale text                                                         */
 /* ------------------------------------------------------------------ */
 
-const LOCALE_TEXT = {
-  en: {
-    title: "Memories",
-    searchPlaceholder: "Search memories…",
-    close: "Close",
-    empty: "No memories yet",
-    noMatch: "No matching memories",
-    recall: "recalls",
-  },
-  "zh-CN": {
-    title: "记忆",
-    searchPlaceholder: "搜索记忆…",
-    close: "关闭",
-    empty: "暂无记忆",
-    noMatch: "没有匹配的记忆",
-    recall: "次召回",
-  },
-} as const;
-
-type Locale = keyof typeof LOCALE_TEXT;
 
 /* ------------------------------------------------------------------ */
 /* Shared styles                                                       */
@@ -183,8 +163,7 @@ const importanceBarStyle: React.CSSProperties = {
 /* ------------------------------------------------------------------ */
 
 export function MemoryPanel({ onClose }: { onClose: () => void }) {
-  const { locale } = useI18n();
-  const text = LOCALE_TEXT[locale as Locale] ?? LOCALE_TEXT.en;
+  const { t } = useI18n();
   const [groups, setGroups] = useState<ProjectMemory[] | null>(null);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -243,13 +222,13 @@ export function MemoryPanel({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div style={headerStyle}>
           <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-            {text.title}
+            {t("memory.title")}
           </div>
           <div style={{ flex: 1, maxWidth: 340, position: "relative" }}>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={text.searchPlaceholder}
+              placeholder={t("memory.searchPlaceholder")}
               style={searchInputStyle}
             />
             <svg
@@ -296,7 +275,7 @@ export function MemoryPanel({ onClose }: { onClose: () => void }) {
                   fontStyle: "italic",
                 }}
               >
-                {text.empty}
+                {t("memory.empty")}
               </div>
             ) : (
               groups.map((g) => {
@@ -344,7 +323,7 @@ export function MemoryPanel({ onClose }: { onClose: () => void }) {
                   fontSize: 13,
                 }}
               >
-                {text.empty}
+                {t("memory.empty")}
               </div>
             ) : filtered.length === 0 ? (
               <div
@@ -355,14 +334,14 @@ export function MemoryPanel({ onClose }: { onClose: () => void }) {
                   fontSize: 13,
                 }}
               >
-                {query ? text.noMatch : text.empty}
+                {query ? t("memory.noMatch") : t("memory.empty")}
               </div>
             ) : (
               filtered.map((entry) => (
                 <MemoryCard
                   key={entry.id}
                   entry={entry}
-                  recallLabel={text.recall}
+                  recallLabel={t("memory.recall")}
                 />
               ))
             )}

@@ -55,24 +55,6 @@ interface PaletteItem {
 /* Locale text                                                         */
 /* ------------------------------------------------------------------ */
 
-const LOCALE_TEXT = {
-  en: {
-    placeholder: "Search commands, sessions, files…",
-    actions: "Actions",
-    sessions: "Sessions",
-    files: "Files",
-    noResults: "No results",
-    directory: "Directory",
-  },
-  "zh-CN": {
-    placeholder: "搜索命令、会话、文件…",
-    actions: "操作",
-    sessions: "会话",
-    files: "文件",
-    noResults: "无结果",
-    directory: "目录",
-  },
-} as const;
 
 const GROUP_ORDER = ["actions", "sessions", "files"] as const;
 
@@ -178,8 +160,7 @@ function FolderIcon({ size = 14 }: { size?: number }) {
 export default function CommandPalette(props: CommandPaletteProps) {
   const { open, onClose, actions, onOpenSession, onOpenFile, cwd } = props;
 
-  const { locale } = useI18n();
-  const t = LOCALE_TEXT[locale as keyof typeof LOCALE_TEXT] ?? LOCALE_TEXT.en;
+  const { t } = useI18n();
 
   /* ---- state ---- */
   const [query, setQuery] = useState("");
@@ -258,13 +239,13 @@ export default function CommandPalette(props: CommandPaletteProps) {
           key: `file:${f.path}`,
           group: "files" as const,
           label: f.path,
-          hint: f.isDir ? t.directory : undefined,
+          hint: f.isDir ? t("palette.directory") : undefined,
           isDir: f.isDir,
           run: () => onOpenFile?.(f.path),
         }))
       : [];
     return [...actionItems, ...sessionItems, ...fileItems];
-  }, [actions, sessions, files, query, fileEnabled, onOpenSession, onOpenFile, t.directory]);
+  }, [actions, sessions, files, query, fileEnabled, onOpenSession, onOpenFile, t]);
 
   /* ---- keep refs in sync ---- */
   itemsRef.current = items;
@@ -392,7 +373,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
               setQuery(e.target.value);
               setActiveIndex(0);
             }}
-            placeholder={t.placeholder}
+            placeholder={t("palette.placeholder")}
             style={{
               flex: 1,
               border: "none",
@@ -425,11 +406,11 @@ export default function CommandPalette(props: CommandPaletteProps) {
                 fontSize: 13,
               }}
             >
-              {t.noResults}
+              {t("palette.noResults")}
             </div>
           ) : (
             groups.map((g, gi) => {
-              const groupLabel: string = (t as Record<string, string>)[g.group] ?? g.group;
+              const groupLabel: string = t(`palette.${g.group}`) ?? g.group;
               return (
                 <div key={g.group}>
                   {gi > 0 && (

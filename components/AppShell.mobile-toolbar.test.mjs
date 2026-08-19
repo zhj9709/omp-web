@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
+// Top-bar code lives in TopBar.tsx since the AppShell split; assert against
+// the concatenation so structural invariants follow the code.
+const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8")
+  + "\n" + await readFile(new URL("./TopBar.tsx", import.meta.url), "utf8");
 
 test("uses a compact mobile toolbar with a floating six-action layer", () => {
   assert.match(source, /data-mobile-toolbar="true"[\s\S]*?flex: 1,[\s\S]*?minWidth: 0/);

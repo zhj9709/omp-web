@@ -4,36 +4,6 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import type { UsageStats } from "@/lib/usage-stats";
 
-const LOCALE_TEXT: Record<string, Record<string, string>> = {
-  en: {
-    title: "Usage Dashboard",
-    loading: "Loading...",
-    empty: "No usage data yet. Start a session to see stats.",
-    tokens: "Tokens",
-    cost: "Cost",
-    requests: "Requests",
-    sessions: "Sessions",
-    last30Days: "Last 30 Days",
-    model: "Model",
-    unknownModel: "unknown",
-    close: "Close",
-    error: "Failed to load usage data.",
-  },
-  "zh-CN": {
-    title: "用量仪表盘",
-    loading: "加载中...",
-    empty: "暂无用量数据。开始会话后即可查看统计。",
-    tokens: "Token",
-    cost: "费用",
-    requests: "请求",
-    sessions: "会话",
-    last30Days: "近 30 天",
-    model: "模型",
-    unknownModel: "未知",
-    close: "关闭",
-    error: "无法加载用量数据。",
-  },
-};
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -60,8 +30,7 @@ interface Props {
 }
 
 export const UsagePanel = memo(function UsagePanel({ onClose }: Props) {
-  const { locale } = useI18n();
-  const t = (key: string): string => LOCALE_TEXT[locale]?.[key] ?? LOCALE_TEXT.en[key] ?? key;
+  const { t } = useI18n();
 
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,7 +99,7 @@ export const UsagePanel = memo(function UsagePanel({ onClose }: Props) {
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label={t("title")}
+        aria-label={t("usage.title")}
         onKeyDown={handleKeyDown}
         style={{
           width: 640,
@@ -156,11 +125,11 @@ export const UsagePanel = memo(function UsagePanel({ onClose }: Props) {
           }}
         >
           <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "var(--text)" }}>
-            {t("title")}
+            {t("usage.title")}
           </h2>
           <button
             onClick={onClose}
-            aria-label={t("close")}
+            aria-label={t("usage.close")}
             style={{
               background: "none",
               border: "none",
@@ -180,28 +149,28 @@ export const UsagePanel = memo(function UsagePanel({ onClose }: Props) {
         <div style={{ overflow: "auto", padding: "16px 18px" }}>
           {loading ? (
             <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", fontSize: 13 }}>
-              {t("loading")}
+              {t("usage.loading")}
             </div>
           ) : error ? (
             <div style={{ textAlign: "center", padding: 40, color: "var(--error)", fontSize: 13 }}>
-              {t("error")}
+              {t("usage.error")}
             </div>
           ) : !stats || stats.totals.requests === 0 ? (
             <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", fontSize: 13 }}>
-              {t("empty")}
+              {t("usage.empty")}
             </div>
           ) : (
             <>
               {/* Chips */}
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
-                <Chip label={t("tokens")} value={formatTokens(stats.totals.tokens)} />
-                <Chip label={t("cost")} value={formatCost(stats.totals.cost)} />
-                <Chip label={t("requests")} value={String(stats.totals.requests)} />
-                <Chip label={t("sessions")} value={String(stats.totals.sessions)} />
+                <Chip label={t("usage.tokens")} value={formatTokens(stats.totals.tokens)} />
+                <Chip label={t("usage.cost")} value={formatCost(stats.totals.cost)} />
+                <Chip label={t("usage.requests")} value={String(stats.totals.requests)} />
+                <Chip label={t("usage.sessions")} value={String(stats.totals.sessions)} />
               </div>
 
               {/* 30-day bar chart */}
-              <SectionHeading>{t("last30Days")}</SectionHeading>
+              <SectionHeading>{t("usage.last30Days")}</SectionHeading>
               <div
                 style={{
                   display: "flex",
@@ -221,7 +190,7 @@ export const UsagePanel = memo(function UsagePanel({ onClose }: Props) {
                   return (
                     <div
                       key={d.day}
-                      title={`${d.day}: ${formatTokens(d.tokens)} tokens, ${formatCost(d.cost)}, ${d.requests} ${t("requests")}`}
+                      title={`${d.day}: ${formatTokens(d.tokens)} tokens, ${formatCost(d.cost)}, ${d.requests} ${t("usage.requests")}`}
                       style={{
                         flex: 1,
                         display: "flex",
@@ -278,12 +247,12 @@ export const UsagePanel = memo(function UsagePanel({ onClose }: Props) {
               {/* Model list */}
               {stats.byModel.length > 0 && (
                 <>
-                  <SectionHeading>{t("model")}</SectionHeading>
+                  <SectionHeading>{t("usage.model")}</SectionHeading>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {stats.byModel.map((m) => {
                       const maxCost = stats.byModel[0].cost || 1;
                       const barPct = (m.cost / maxCost) * 100;
-                      const modelLabel = m.model === "unknown" ? t("unknownModel") : m.model;
+                      const modelLabel = m.model === "unknown" ? t("usage.unknownModel") : m.model;
                       return (
                         <div key={m.model} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>

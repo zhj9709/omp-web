@@ -100,24 +100,6 @@ const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 
 
-const LOCALE_TEXT: Record<"en" | "zh-CN", Record<string, string>> = {
-  en: {
-    searchToggle: "Search messages",
-    searchPlaceholder: "Search…",
-    searchPrev: "Previous match",
-    searchNext: "Next match",
-    searchClose: "Close search",
-    searchNoMatch: "No matches",
-  },
-  "zh-CN": {
-    searchToggle: "搜索消息",
-    searchPlaceholder: "搜索…",
-    searchPrev: "上一个",
-    searchNext: "下一个",
-    searchClose: "关闭搜索",
-    searchNoMatch: "无匹配",
-  },
-};
 function NewSessionUpdateLink({
   label,
 }: {
@@ -297,7 +279,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
 }
 
 export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const isMobile = useIsMobile();
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
@@ -355,7 +337,6 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
   const [highlightedMsgIdx, setHighlightedMsgIdx] = useState<number | null>(null);
 
-  const tSearch = (key: string): string => LOCALE_TEXT[locale]?.[key] ?? LOCALE_TEXT.en[key] ?? key;
 
   // Stable callbacks for memoized child components (SubagentRoster / TodosPanel).
   // Inline arrows here would defeat their memo() on every ChatWindow re-render.
@@ -1143,8 +1124,8 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
             <button
               type="button"
               onClick={openSearch}
-              title={tSearch("searchToggle")}
-              aria-label={tSearch("searchToggle")}
+              title={t("chat.searchToggle")}
+              aria-label={t("chat.searchToggle")}
               style={{
                 width: 28, height: 28, padding: 0,
                 display: "flex", alignItems: "center", justifyContent: "center",
@@ -1183,7 +1164,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
                       else goToNextMatch();
                     }
                   }}
-                  placeholder={tSearch("searchPlaceholder")}
+                  placeholder={t("chat.searchPlaceholder")}
                   autoFocus
                   style={{
                     width: "100%", height: 30,
@@ -1201,7 +1182,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
                   <button
                     type="button"
                     onClick={() => setSearchInput("")}
-                    aria-label={tSearch("searchClose")}
+                    aria-label={t("chat.searchClose")}
                     style={{
                       position: "absolute", right: 4, width: 20, height: 20, padding: 0,
                       display: "flex", alignItems: "center", justifyContent: "center",
@@ -1216,15 +1197,15 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
               </div>
               {debouncedQuery && (
                 <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-dim)", whiteSpace: "nowrap", minWidth: 36, textAlign: "center" }}>
-                  {searchMatches.length > 0 ? `${currentMatchIdx + 1}/${searchMatches.length}` : tSearch("searchNoMatch")}
+                  {searchMatches.length > 0 ? `${currentMatchIdx + 1}/${searchMatches.length}` : t("chat.searchNoMatch")}
                 </span>
               )}
               <button
                 type="button"
                 onClick={goToPrevMatch}
                 disabled={searchMatches.length === 0}
-                title={tSearch("searchPrev")}
-                aria-label={tSearch("searchPrev")}
+                title={t("chat.searchPrev")}
+                aria-label={t("chat.searchPrev")}
                 style={{
                   width: 26, height: 26, padding: 0,
                   display: "flex", alignItems: "center", justifyContent: "center",
@@ -1242,8 +1223,8 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
                 type="button"
                 onClick={goToNextMatch}
                 disabled={searchMatches.length === 0}
-                title={tSearch("searchNext")}
-                aria-label={tSearch("searchNext")}
+                title={t("chat.searchNext")}
+                aria-label={t("chat.searchNext")}
                 style={{
                   width: 26, height: 26, padding: 0,
                   display: "flex", alignItems: "center", justifyContent: "center",
@@ -1260,8 +1241,8 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
               <button
                 type="button"
                 onClick={closeSearch}
-                title={tSearch("searchClose")}
-                aria-label={tSearch("searchClose")}
+                title={t("chat.searchClose")}
+                aria-label={t("chat.searchClose")}
                 style={{
                   width: 26, height: 26, padding: 0,
                   display: "flex", alignItems: "center", justifyContent: "center",
