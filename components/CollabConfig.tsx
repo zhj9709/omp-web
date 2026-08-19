@@ -36,9 +36,9 @@ const dialogStyle: React.CSSProperties = {
   maxHeight: "min(80vh, 640px)",
   overflow: "auto",
   border: "1px solid var(--border)",
-  borderRadius: 8,
+  borderRadius: "var(--radius-lg)",
   background: "var(--bg-panel)",
-  boxShadow: "0 12px 36px rgba(0,0,0,0.24)",
+  boxShadow: "var(--shadow-modal)",
 };
 
 const fieldStyle: React.CSSProperties = {
@@ -212,7 +212,7 @@ export function CollabConfig({
                   </div>
                 )}
                 {share.kind === "error" && (
-                  <div role="alert" style={{ marginTop: 10, color: "#ef4444", fontSize: 12, lineHeight: 1.5 }}>
+                  <div role="alert" style={{ marginTop: 10, color: "var(--error)", fontSize: 12, lineHeight: 1.5 }}>
                     {share.message}
                   </div>
                 )}
@@ -257,7 +257,7 @@ export function CollabConfig({
               </button>
             </div>
             {joinError && (
-              <div role="alert" style={{ marginTop: 8, color: "#ef4444", fontSize: 12, lineHeight: 1.5 }}>
+              <div role="alert" style={{ marginTop: 8, color: "var(--error)", fontSize: 12, lineHeight: 1.5 }}>
                 {joinError}
               </div>
             )}

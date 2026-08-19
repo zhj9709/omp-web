@@ -33,8 +33,41 @@
   --assistant-bg: #ffffff;
   --tool-bg: #f9fafb;
   --bg-subtle: rgba(0,0,0,0.03);
+
+  /* Semantic colors — status surfaces (text / border / background). */
+  --success: #059669;
+  --success-border: rgba(5, 150, 105, 0.35);
+  --success-bg: rgba(16, 185, 129, 0.08);
+  --warning: #b45309;
+  --warning-border: rgba(217, 119, 6, 0.35);
+  --warning-bg: rgba(234, 179, 8, 0.09);
+  --error: #dc2626;
+  --error-border: rgba(220, 38, 38, 0.35);
+  --error-bg: rgba(239, 68, 68, 0.07);
+  --info: var(--accent);
+  --info-border: color-mix(in srgb, var(--accent) 35%, transparent);
+  --info-bg: color-mix(in srgb, var(--accent) 8%, transparent);
+
+  /* Radius scale: xs chips/badges · sm controls · md cards · lg modals · xl hero surfaces. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  /* 4pt spacing scale — new components should consume these. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Elevation: menu (dropdown/popover), menu-up (opens upward), modal. */
+  --shadow-menu: 0 6px 20px rgba(0, 0, 0, 0.10);
+  --shadow-menu-up: 0 -6px 20px rgba(0, 0, 0, 0.10);
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.18);
   --shadow-pop: 0 8px 28px rgba(24, 26, 31, 0.12);
 }
 
@@ -53,6 +86,20 @@ html.dark {
   --assistant-bg: #191b21;
   --tool-bg: #1f232b;
   --bg-subtle: rgba(255,255,255,0.04);
+
+  --success: #4ade80;
+  --success-border: rgba(74, 222, 128, 0.35);
+  --success-bg: rgba(74, 222, 128, 0.10);
+  --warning: #fbbf24;
+  --warning-border: rgba(251, 191, 36, 0.35);
+  --warning-bg: rgba(251, 191, 36, 0.10);
+  --error: #f87171;
+  --error-border: rgba(248, 113, 113, 0.35);
+  --error-bg: rgba(248, 113, 113, 0.10);
+
+  --shadow-menu: 0 6px 20px rgba(0, 0, 0, 0.40);
+  --shadow-menu-up: 0 -6px 20px rgba(0, 0, 0, 0.40);
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.55);
   --radius-md: 8px;
   --radius-lg: 12px;
   --shadow-pop: 0 10px 32px rgba(0, 0, 0, 0.45);
@@ -1241,9 +1288,9 @@ span.token.table {
 }
 
 @keyframes saved-pop {
-  0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55); }
-  40%  { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.25); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+  0%   { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent); }
+  40%  { transform: scale(1.08); box-shadow: 0 0 0 6px color-mix(in srgb, var(--success) 25%, transparent); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
 }
 
 @keyframes saved-check-draw {

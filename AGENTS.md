@@ -351,4 +351,15 @@ message back to its `.jsonl` entry id, used for branch/navigate calls.
 --text --text-muted --text-dim
 --accent --user-bg --tool-bg
 --font-mono
+
+Semantic (text / -border / -bg variants, dark overrides in html.dark):
+--success --warning --error --info
+
+Radius scale: --radius-xs 4 · --radius-sm 6 · --radius-md 8 · --radius-lg 12 · --radius-xl 14
+  xs chips/badges · sm controls · md cards · lg modals · xl hero surfaces
+Spacing (4pt, new components consume these): --space-1..8
+Elevation: --shadow-menu · --shadow-menu-up (opens upward) · --shadow-modal · --shadow-pop
+
+Rule: never hardcode status colors (#ef4444, #4ade80, rgba(234,179,8,…), …) in components —
+use the semantic tokens so dark mode stays correct.
 ```

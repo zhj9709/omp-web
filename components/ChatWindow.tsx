@@ -1066,11 +1066,11 @@ function NoticeShelf({ notices, floating = false }: { notices: NoticeItem[]; flo
     >
       {notices.map((notice, index) => {
         const color = notice.type === "error"
-          ? "#ef4444"
+          ? "var(--error)"
           : notice.type === "warning"
-            ? "#d97706"
+            ? "var(--warning)"
             : notice.type === "success"
-              ? "#10b981"
+              ? "var(--success)"
               : "var(--accent)";
         return (
           <div
@@ -1165,9 +1165,9 @@ function ExtensionDialog({
         style={{
           width: "min(560px, 100%)",
           border: "1px solid var(--border)",
-          borderRadius: 8,
+          borderRadius: "var(--radius-lg)",
           background: "var(--bg)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.28)",
+          boxShadow: "var(--shadow-modal)",
           overflow: "hidden",
         }}
       >
@@ -1351,9 +1351,9 @@ function ExtensionCustomPanel({
           width: "min(920px, 100%)",
           maxHeight: "min(760px, calc(100vh - 40px))",
           border: "1px solid var(--border)",
-          borderRadius: 8,
+          borderRadius: "var(--radius-lg)",
           background: "var(--bg)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.28)",
+          boxShadow: "var(--shadow-modal)",
           overflow: "hidden",
           outline: "none",
         }}

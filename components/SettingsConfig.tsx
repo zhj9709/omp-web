@@ -118,12 +118,12 @@ function JsonControl({ value, onChange }: { value: string; onChange: (raw: strin
         rows={2}
         spellCheck={false}
         style={{
-          width: 320, minHeight: 40, maxHeight: 160, borderRadius: 6, border: `1px solid ${bad ? "#e01a4f" : "var(--border)"}`,
+          width: 320, minHeight: 40, maxHeight: 160, borderRadius: 6, border: `1px solid ${bad ? "var(--error)" : "var(--border)"}`,
           background: "var(--bg-panel)", color: "var(--text)", fontSize: 11.5, padding: "6px 8px",
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", resize: "vertical",
         }}
       />
-      {bad && <span style={{ fontSize: 10.5, color: "#e01a4f" }}>Invalid JSON</span>}
+      {bad && <span style={{ fontSize: 10.5, color: "var(--error)" }}>Invalid JSON</span>}
     </div>
   );
 }
@@ -411,8 +411,8 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
     }} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{
         width: 960, maxWidth: "94vw", height: "min(80vh, 760px)", display: "flex", flexDirection: "column",
-        background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden",
-        boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
+        background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden",
+        boxShadow: "var(--shadow-modal)",
       }}>
         {/* Header */}
         <div style={{
@@ -493,7 +493,7 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
               />
             )}
             {saveError && (
-              <div style={{ fontSize: 12, color: "#e01a4f", background: "rgba(224,26,79,0.08)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--error)", background: "var(--error-bg)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
                 保存失败：{saveError}
               </div>
             )}

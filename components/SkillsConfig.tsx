@@ -275,7 +275,7 @@ function SkillDetail({
                 style={{
                   fontFamily: "var(--font-mono)",
                   fontSize: 12,
-                  color: "#d97706",
+                  color: "var(--warning)",
                 }}
               >
                 {shortVersion(updateStatus.latestVersion)}
@@ -289,9 +289,9 @@ function SkillDetail({
                   color: checkingUpdate
                     ? "var(--accent)"
                     : updateStatus?.state === "up-to-date"
-                      ? "#16a34a"
+                      ? "var(--success)"
                       : updateStatus?.state === "error"
-                          ? "#ef4444"
+                          ? "var(--error)"
                           : "var(--text-dim)",
                 }}
               >
@@ -325,7 +325,7 @@ function SkillDetail({
             )}
           </div>
           {updateError && (
-            <span style={{ fontSize: 12, color: "#ef4444" }}>{updateError}</span>
+            <span style={{ fontSize: 12, color: "var(--error)" }}>{updateError}</span>
           )}
         </div>
       )}
@@ -666,7 +666,7 @@ function AddSkillPanel({
                         : "pointer",
                     background: isInstalled ? "rgba(34,197,94,0.1)" : "none",
                     color: isInstalled
-                      ? "#16a34a"
+                      ? "var(--success)"
                       : isInstalling
                         ? "var(--accent)"
                         : "var(--text-muted)",
@@ -932,10 +932,10 @@ export function SkillsConfig({
           maxHeight: "calc(100dvh - 16px)",
           background: "var(--bg)",
           border: "1px solid var(--border)",
-          borderRadius: 10,
+          borderRadius: "var(--radius-lg)",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+          boxShadow: "var(--shadow-modal)",
           overflow: "hidden",
         }}
       >
@@ -1157,7 +1157,7 @@ export function SkillsConfig({
                             <span
                                title={t("i18n.updateAvailable")}
                               style={{
-                                color: "#d97706",
+                                color: "var(--warning)",
                                 fontSize: 13,
                                 lineHeight: 1,
                                 flexShrink: 0,
@@ -1377,7 +1377,7 @@ export function SkillsConfig({
             {Object.values(updateStatuses).filter(
               (status) => status.state === "update-available",
             ).length > 0 && (
-              <span style={{ fontSize: 12, color: "#d97706" }}>
+              <span style={{ fontSize: 12, color: "var(--warning)" }}>
                 {
                   Object.values(updateStatuses).filter(
                     (status) => status.state === "update-available",

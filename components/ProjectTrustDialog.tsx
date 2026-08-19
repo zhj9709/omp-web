@@ -42,9 +42,9 @@ export function ProjectTrustDialog({
           width: 440,
           maxWidth: "100%",
           border: "1px solid var(--border)",
-          borderRadius: 8,
+          borderRadius: "var(--radius-lg)",
           background: "var(--bg-panel)",
-          boxShadow: "0 12px 36px rgba(0,0,0,0.24)",
+          boxShadow: "var(--shadow-modal)",
           overflow: "hidden",
         }}
       >
@@ -88,7 +88,7 @@ export function ProjectTrustDialog({
               {cwd}
             </code>
             {error && (
-              <div role="alert" style={{ marginTop: 10, color: "#ef4444", fontSize: 12, lineHeight: 1.5 }}>
+              <div role="alert" style={{ marginTop: 10, color: "var(--error)", fontSize: 12, lineHeight: 1.5 }}>
                 {error}
               </div>
             )}
