@@ -25,27 +25,34 @@ interface UseGlobalKeyboardShortcutsOptions {
   onNewSession?: (cwd: string) => void;
   /** The currently selected project directory (sidebar cwd). */
   activeCwd?: string | null;
+  /** Called when Cmd/Ctrl+K is pressed to open the command palette. */
+  onCommandPalette?: () => void;
 }
 
 /**
  * Register global keyboard shortcuts for the application.
  *
  * Shortcuts handled here:
- *   Esc          – stop the running agent (via module-level abort handler)
- *   Ctrl+Alt+N   – create a new session in the active project directory
- *
- * Note: Esc inside <textarea> or <input> is deliberately NOT handled here.
- * ChatInput manages its own Esc logic (closing slash / @ file menus, stopping
- * the agent when no menu is open) because it needs intimate knowledge of menu
- * state that is local to that component.
+ *   Esc          – stop the running agent (via module-level abort handler);
+ *                  skipped inside &lt;textarea&gt;/&lt;input&gt; (ChatInput manages its own).
+ *   Cmd/Ctrl+K   – open the command palette; works even inside text inputs.
+ *   Ctrl+Alt+N   – create a new session in the active project directory.
  */
 export function useGlobalKeyboardShortcuts(
   options: UseGlobalKeyboardShortcutsOptions,
 ): void {
-  const { onNewSession, activeCwd } = options;
+  const { onNewSession, activeCwd, onCommandPalette } = options;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
+      // ---- Cmd/Ctrl+K: command palette (works inside inputs too) ----
+      if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey) && !e.altKey) {
+        if (!onCommandPalette) return;
+        e.preventDefault();
+        onCommandPalette();
+        return;
+      }
+
       // ---- Esc: stop agent ----
       if (e.key === "Escape") {
         if (!globalAbortHandler) return;
@@ -69,5 +76,5 @@ export function useGlobalKeyboardShortcuts(
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeCwd, onNewSession]);
+  }, [activeCwd, onNewSession, onCommandPalette]);
 }

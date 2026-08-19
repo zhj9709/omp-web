@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
@@ -20,6 +20,10 @@ import { SettingsConfig } from "./SettingsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { CollabConfig } from "./CollabConfig";
+import { MemoryPanel } from "./MemoryPanel";
+import { UsagePanel } from "./UsagePanel";
+import { RunningCenter } from "./RunningCenter";
+import CommandPalette from "./CommandPalette";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -111,6 +115,9 @@ export function AppShell() {
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [collabConfigOpen, setCollabConfigOpen] = useState(false);
   const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
@@ -614,10 +621,11 @@ export function AppShell() {
     router.replace("/", { scroll: false });
   }, [invalidateWorkspaceRestore, router, isMobile]);
 
-  // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
+  // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N, Cmd/Ctrl+K etc.)
   useGlobalKeyboardShortcuts({
     onNewSession: (cwd: string) => handleNewSession(`kb-${Date.now()}`, cwd),
     activeCwd,
+    onCommandPalette: () => setPaletteOpen(true),
   });
 
   // Client-built transient SessionInfo (new session / fork) lacks the
@@ -638,6 +646,37 @@ export function AppShell() {
       })
       .catch(() => {});
   }, []);
+
+  // Shared by the command palette and the running-tasks indicator: resolve a
+  // session id from the list, then run the standard select flow.
+  const handleOpenSessionById = useCallback((sessionId: string) => {
+    if (selectedSession?.id === sessionId) return;
+    void fetch("/api/sessions", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
+      .then((d) => {
+        const full = d?.sessions.find((s) => s.id === sessionId);
+        if (full) handleSelectSession(full);
+      })
+      .catch(() => {});
+  }, [handleSelectSession, selectedSession?.id]);
+
+  // Command palette actions — every entry closes the palette before running.
+  const paletteActions = useMemo(() => {
+    const acts = [
+      activeCwd
+        ? { id: "new-session", label: translate("palette.newSession"), hint: "Ctrl+Alt+N", run: () => handleNewSession(`kb-${Date.now()}`, activeCwd) }
+        : null,
+      { id: "toggle-theme", label: translate("palette.toggleTheme"), run: () => toggleTheme() },
+      { id: "open-settings", label: translate("common.settings"), run: () => setSettingsConfigOpen(true) },
+      { id: "open-models", label: translate("common.models"), run: () => setModelsConfigOpen(true) },
+      { id: "open-skills", label: translate("common.skills"), run: () => setSkillsConfigOpen(true) },
+      { id: "open-plugins", label: translate("common.plugins"), run: () => setPluginsConfigOpen(true) },
+      { id: "open-collab", label: translate("collab.title"), run: () => setCollabConfigOpen(true) },
+      { id: "open-memory", label: translate("common.memory"), run: () => setMemoryOpen(true) },
+      { id: "open-usage", label: translate("common.usage"), run: () => setUsageOpen(true) },
+    ].filter((a): a is NonNullable<typeof a> => a !== null);
+    return acts.map((a) => ({ ...a, run: () => { setPaletteOpen(false); a.run(); } }));
+  }, [activeCwd, handleNewSession, toggleTheme, translate]);
 
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo, sourceDraftKey: string) => {
@@ -943,7 +982,7 @@ export function AppShell() {
         onBackgroundTaskDone={handleBackgroundTaskDone}
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
       />
-      <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
+      <div style={{ padding: "8px", flexShrink: 0, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
         {([
           {
              label: translate("common.models"),
@@ -960,7 +999,7 @@ export function AppShell() {
             ),
           },
           {
-            label: "设置",
+            label: translate("common.settings"),
             onClick: () => setSettingsConfigOpen(true),
             disabled: false,
             icon: (
@@ -1008,6 +1047,30 @@ export function AppShell() {
               </svg>
             ),
           },
+          {
+            label: translate("common.memory"),
+            onClick: () => setMemoryOpen(true),
+            disabled: false,
+            icon: (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 4a4 4 0 0 0-4 4 4 4 0 0 0-2 7 4 4 0 0 0 6 3 4 4 0 0 0 6-3 4 4 0 0 0-2-7 4 4 0 0 0-4-4z" />
+                <path d="M12 4v16" />
+              </svg>
+            ),
+          },
+          {
+            label: translate("common.usage"),
+            onClick: () => setUsageOpen(true),
+            disabled: false,
+            icon: (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="4" y1="20" x2="4" y2="12" />
+                <line x1="10" y1="20" x2="10" y2="6" />
+                <line x1="16" y1="20" x2="16" y2="14" />
+                <line x1="22" y1="20" x2="22" y2="9" />
+              </svg>
+            ),
+          },
         ] as { label: string; onClick: () => void; disabled: boolean; icon: React.ReactNode }[]).map(({ label, onClick, disabled, icon }) => (
           <button type="button"
             key={label}
@@ -1015,8 +1078,8 @@ export function AppShell() {
             disabled={disabled}
             title={label}
             style={{
-              flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              whiteSpace: "nowrap",
+              minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+              whiteSpace: "nowrap", overflow: "hidden",
               height: 32, padding: 0, background: "none", border: "none",
               borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
               fontSize: 12, opacity: disabled ? 0.35 : 1,
@@ -1829,6 +1892,26 @@ export function AppShell() {
               {renderLanguageButton(false)}
               {renderProjectTrustWarning(false)}
               {renderChatToolbarActions(false)}
+              <button
+                type="button"
+                onClick={() => setPaletteOpen(true)}
+                title={translate("palette.open")}
+                aria-label={translate("palette.open")}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+                  background: "none", border: "none", borderRight: "1px solid var(--border)",
+                  color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+                }}
+                onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+                onMouseLeave={(event) => { event.currentTarget.style.color = "var(--text-muted)"; }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" />
+                  <line x1="21" y1="21" x2="16.5" y2="16.5" />
+                </svg>
+              </button>
+              <RunningCenter onOpenSession={handleOpenSessionById} />
               {renderSessionStatsButton(false)}
             </>
           )}
@@ -2307,6 +2390,16 @@ export function AppShell() {
         onClose={() => setCollabConfigOpen(false)}
       />
     )}
+    {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
+    {usageOpen && <UsagePanel onClose={() => setUsageOpen(false)} />}
+    <CommandPalette
+      open={paletteOpen}
+      onClose={() => setPaletteOpen(false)}
+      actions={paletteActions}
+      onOpenSession={handleOpenSessionById}
+      onOpenFile={(p) => handleOpenFile(p, getFileName(p), { sourceSessionId: selectedSession?.id ?? null })}
+      cwd={activeCwd}
+    />
     </>
   );
 }

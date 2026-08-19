@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SETTINGS_SCHEMA, SETTINGS_TABS, type SettingDef } from "@/lib/settings-schema";
 import { SETTINGS_GROUPS_ZH, SETTINGS_ZH } from "@/lib/settings-i18n-zh";
+import { useI18n } from "@/hooks/useI18n";
 
 /* ------------------------------------------------------------------ */
 /* Dotted-path helpers                                                 */
@@ -103,6 +104,7 @@ function TextControl({ value, placeholder, password, onChange }: {
 }
 
 function JsonControl({ value, onChange }: { value: string; onChange: (raw: string) => void }) {
+  const { t } = useI18n();
   const [raw, setRaw] = useState(value);
   const [bad, setBad] = useState(false);
   useEffect(() => { setRaw(value); setBad(false); }, [value]);
@@ -123,7 +125,7 @@ function JsonControl({ value, onChange }: { value: string; onChange: (raw: strin
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", resize: "vertical",
         }}
       />
-      {bad && <span style={{ fontSize: 10.5, color: "var(--error)" }}>Invalid JSON</span>}
+      {bad && <span style={{ fontSize: 10.5, color: "var(--error)" }}>{t("settings.invalidJson")}</span>}
     </div>
   );
 }
@@ -135,7 +137,8 @@ function JsonControl({ value, onChange }: { value: string; onChange: (raw: strin
 function SettingRow({ def, value, onChange, credentialSet }: {
   def: SettingDef; value: unknown; onChange: (v: unknown) => void; credentialSet: boolean;
 }) {
-  const zh = SETTINGS_ZH[def.key];
+  const { locale, t } = useI18n();
+  const zh = locale === "zh-CN" ? SETTINGS_ZH[def.key] : undefined;
   const label = zh?.label ?? def.ui?.label ?? def.key;
   const desc = zh?.description ?? def.ui?.description ?? def.description;
   const type = def.type;
@@ -154,14 +157,14 @@ function SettingRow({ def, value, onChange, credentialSet }: {
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <TextControl
           value={typeof value === "string" ? value : ""}
-          placeholder={isSet ? "••••••••（已设置，留空保持不变）" : "未设置"}
+          placeholder={isSet ? t("settings.credentialSetPlaceholder") : t("settings.credentialUnsetPlaceholder")}
           password
           onChange={(v) => onChange(v)}
         />
         {isSet && (
           <button
             type="button"
-            title="清除"
+            title={t("settings.clear")}
             onClick={() => onChange(null)}
             style={{ background: "none", border: "1px solid var(--border)", borderRadius: 6, height: 28, width: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 13 }}
           >✕</button>
@@ -205,6 +208,7 @@ function RolesEditor({ roles, models, onChange }: {
   models: Record<string, string> | null;
   onChange: (next: Record<string, string>) => void;
 }) {
+  const { t } = useI18n();
   const [show, setShow] = useState(false);
   const modelOptions = useMemo(() => {
     if (!models) return [];
@@ -246,9 +250,9 @@ function RolesEditor({ roles, models, onChange }: {
           color: "var(--text)", fontSize: 13, fontWeight: 600,
         }}
       >
-        <span>Model Roles（角色模型分配）</span>
+        <span>{t("settings.modelRoles")}</span>
         <span style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 400 }}>
-          {Object.keys(roles ?? {}).length} 个角色已配置
+          {t("settings.rolesConfigured", { count: Object.keys(roles ?? {}).length })}
           <span style={{ marginLeft: 8 }}>{show ? "▴" : "▾"}</span>
         </span>
       </button>
@@ -264,7 +268,7 @@ function RolesEditor({ roles, models, onChange }: {
                   onChange={(ev) => setEdits((prev) => ({ ...prev, [role]: { ...(prev[role] ?? e), model: ev.target.value } }))}
                   style={{ flex: 1, height: 26, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-panel)", color: "var(--text)", fontSize: 12, padding: "0 6px" }}
                 >
-                  <option value="">— 未设置 —</option>
+                  <option value="">{t("settings.roleUnset")}</option>
                   {modelOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
                 <select
@@ -272,7 +276,7 @@ function RolesEditor({ roles, models, onChange }: {
                   onChange={(ev) => setEdits((prev) => ({ ...prev, [role]: { ...(prev[role] ?? e), level: ev.target.value } }))}
                   style={{ width: 88, height: 26, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-panel)", color: "var(--text)", fontSize: 12, padding: "0 6px" }}
                 >
-                  <option value="">无</option>
+                  <option value="">{t("settings.none")}</option>
                   {THINKING_LEVELS.map((lv) => <option key={lv} value={lv}>{lv}</option>)}
                 </select>
                 <button
@@ -284,7 +288,7 @@ function RolesEditor({ roles, models, onChange }: {
                     background: e.model ? "var(--accent)" : "var(--bg-hover)", color: e.model ? "#fff" : "var(--text-dim)",
                     fontSize: 11.5, fontWeight: 600,
                   }}
-                >应用</button>
+                >{t("settings.apply")}</button>
               </div>
             );
           })}
@@ -299,6 +303,7 @@ function RolesEditor({ roles, models, onChange }: {
 /* ------------------------------------------------------------------ */
 
 export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClose: () => void }) {
+  const { locale, t } = useI18n();
   const [values, setValues] = useState<Record<string, unknown> | null>(null);
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const [activeTab, setActiveTab] = useState<string>("model");
@@ -404,6 +409,13 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
     return SETTINGS_TABS.filter((t) => ids.has(t.id));
   }, []);
 
+  // Tab labels ship Chinese-only in the generated schema; translate when a key exists.
+  const tabLabel = (tab: { id: string; label: string }): string => {
+    const key = `settings.tab.${tab.id}`;
+    const translated = t(key);
+    return translated === key ? tab.label : translated;
+  };
+
   return createPortal(
     <div style={{
       position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
@@ -419,12 +431,12 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
           display: "flex", alignItems: "center", gap: 12, padding: "14px 18px",
           borderBottom: "1px solid var(--border)", background: "var(--bg-panel)",
         }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>⚙ 设置</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>{t("settings.title")}</div>
           <div style={{ flex: 1, maxWidth: 340, position: "relative" }}>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索设置…"
+              placeholder={t("settings.searchPlaceholder")}
               style={{
                 width: "100%", height: 30, borderRadius: 8, border: "1px solid var(--border)",
                 background: "var(--bg)", color: "var(--text)", fontSize: 12.5, padding: "0 10px 0 28px",
@@ -434,9 +446,9 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
               <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.5" y2="16.5" />
             </svg>
           </div>
-          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>更改保存后对新会话生效</span>
+          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("settings.effectiveNewSessions")}</span>
           <div style={{ flex: 1 }} />
-          <button type="button" onClick={onClose} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, height: 30, padding: "0 14px", cursor: "pointer", color: "var(--text-muted)", fontSize: 12.5 }}>关闭</button>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, height: 30, padding: "0 14px", cursor: "pointer", color: "var(--text-muted)", fontSize: 12.5 }}>{t("settings.close")}</button>
           <button
             type="button"
             onClick={() => void save()}
@@ -447,7 +459,7 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
               fontSize: 12.5, fontWeight: 600,
             }}
           >
-            {savedOk ? "✓ 已保存" : saving ? "保存中…" : "保存"}
+            {savedOk ? t("settings.saved") : saving ? t("settings.saving") : t("settings.save")}
           </button>
         </div>
 
@@ -476,7 +488,7 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
                   }}
                 >
                   <span style={{ fontSize: 14 }}>{tab.icon}</span>
-                  <span style={{ flex: 1 }}>{tab.label}</span>
+                  <span style={{ flex: 1 }}>{tabLabel(tab)}</span>
                   <span style={{ fontSize: 10.5, color: "var(--text-dim)" }}>{count}</span>
                 </button>
               );
@@ -494,7 +506,7 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
             )}
             {saveError && (
               <div style={{ fontSize: 12, color: "var(--error)", background: "var(--error-bg)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
-                保存失败：{saveError}
+                {t("settings.saveFailed", { error: saveError })}
               </div>
             )}
             {groups.map(([group, rows]) => (
@@ -504,7 +516,7 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
                   color: "var(--text-dim)", paddingBottom: 6, borderBottom: "1px solid var(--border)",
                   marginBottom: 2,
                 }}>
-                  {SETTINGS_GROUPS_ZH[group] ?? group}
+                  {locale === "zh-CN" ? (SETTINGS_GROUPS_ZH[group] ?? group) : group}
                 </div>
                 {rows.map((def) => (
                   <SettingRow
@@ -518,7 +530,7 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
               </div>
             ))}
             {groups.length === 0 && (
-              <div style={{ padding: 40, textAlign: "center", color: "var(--text-dim)", fontSize: 13 }}>没有匹配的设置</div>
+              <div style={{ padding: 40, textAlign: "center", color: "var(--text-dim)", fontSize: 13 }}>{t("settings.noMatch")}</div>
             )}
           </div>
         </div>

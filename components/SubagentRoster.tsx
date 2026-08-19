@@ -7,6 +7,7 @@ import {
   type SubagentTranscript,
   type SubagentTranscriptMessage,
 } from "@/lib/subagents";
+import { useI18n } from "@/hooks/useI18n";
 
 const STATUS_COLORS: Record<string, string> = {
   active: "var(--accent)",
@@ -63,6 +64,7 @@ function TranscriptView({
   transcript: SubagentTranscript;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const messages = transcript.messages ?? [];
   return (
     <div
@@ -93,12 +95,12 @@ function TranscriptView({
             whiteSpace: "nowrap",
           }}
         >
-          Subagent transcript
+          {t("subagent.transcript")}
         </span>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Back to subagent list"
+          aria-label={t("subagent.backToSubagentList")}
           style={{
             background: "none",
             border: "none",
@@ -108,7 +110,7 @@ function TranscriptView({
             padding: "2px 6px",
           }}
         >
-          Back
+          {t("subagent.back")}
         </button>
       </div>
       <div
@@ -124,7 +126,7 @@ function TranscriptView({
       >
         {messages.length === 0 ? (
           <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
-            No transcript available.
+            {t("subagent.noTranscript")}
           </div>
         ) : (
           messages.map((message, i) => {
@@ -148,7 +150,7 @@ function TranscriptView({
                     padding: "0 4px",
                   }}
                 >
-                  {message.role || "message"}
+                  {message.role || t("subagent.message")}
                 </span>
                 <div
                   style={{
@@ -168,7 +170,7 @@ function TranscriptView({
                     fontFamily: "var(--font-mono)",
                   }}
                 >
-                  {text || "[empty]"}
+                  {text || t("subagent.emptyMessage")}
                 </div>
               </div>
             );
@@ -190,6 +192,7 @@ export const SubagentRoster = memo(function SubagentRoster({
   onRefresh: () => void;
   loadTranscript: (subagentId: string) => Promise<SubagentTranscript | null>;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<SubagentTranscript | null>(null);
@@ -253,8 +256,8 @@ export const SubagentRoster = memo(function SubagentRoster({
     <>
       {(open || subagents.length > 0) && (
       <button
-        aria-label="子代理"
-        title={unavailable ? "子代理不可用" : "子代理"}
+        aria-label={t("subagent.title")}
+        title={unavailable ? t("subagent.unavailable") : t("subagent.title")}
         className="toolbar-ghost-btn"
         style={{
           position: "absolute",
@@ -277,7 +280,7 @@ export const SubagentRoster = memo(function SubagentRoster({
           <path d="M12 7V4" /><circle cx="12" cy="3" r="1" />
           <line x1="9" y1="12" x2="9" y2="12.01" /><line x1="15" y1="12" x2="15" y2="12.01" />
         </svg>
-        <span>子代理</span>
+        <span>{t("subagent.title")}</span>
         {activeCount > 0 && (
           <span
             style={{
@@ -342,7 +345,7 @@ export const SubagentRoster = memo(function SubagentRoster({
                 }}
               >
                 <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>
-                  子代理
+                  {t("subagent.title")}
                 </span>
                 <button
                   type="button"
@@ -356,7 +359,7 @@ export const SubagentRoster = memo(function SubagentRoster({
                     padding: "2px 6px",
                   }}
                 >
-                  刷新
+                  {t("subagent.refresh")}
                 </button>
               </div>
               <div
@@ -372,14 +375,14 @@ export const SubagentRoster = memo(function SubagentRoster({
               >
                 {loadingTranscript && (
                   <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "8px 10px" }}>
-                    加载中…
+                    {t("subagent.loading")}
                   </div>
                 )}
                 {subagents.length === 0 ? (
                   <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "8px 10px" }}>
                     {unavailable
-                      ? "子代理监控不可用。"
-                      : "暂无子代理。task 工具启动的子代理会显示在这里。"}
+                      ? t("subagent.monitorUnavailable")
+                      : t("subagent.empty")}
                   </div>
                 ) : (
                   subagents.map((info) => (

@@ -1293,6 +1293,45 @@ span.token.table {
   100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
 }
 
+/* ---- Micro-interactions ------------------------------------------------ */
+/* New chat messages ease in once on mount (keyed list → no replay). */
+@keyframes message-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.anim-message-enter {
+  animation: message-enter 0.22s ease-out;
+}
+
+/* Generic one-shot fade for expanding regions (tool card bodies, panels). */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.anim-fade-in {
+  animation: fade-in 0.18s ease-out;
+}
+
+/* Skeleton shimmer for loading placeholders. */
+@keyframes skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-hover) 25%, var(--bg-selected) 50%, var(--bg-hover) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s linear infinite;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-message-enter,
+  .anim-fade-in,
+  .skeleton {
+    animation: none;
+  }
+}
+
 @keyframes saved-check-draw {
   from { stroke-dashoffset: 18; opacity: 0; }
   to   { stroke-dashoffset: 0;  opacity: 1; }

@@ -99,6 +99,25 @@ function WaitingPhaseIndicator({ label }: { label: string | null }) {
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 
+
+const LOCALE_TEXT: Record<"en" | "zh-CN", Record<string, string>> = {
+  en: {
+    searchToggle: "Search messages",
+    searchPlaceholder: "Search…",
+    searchPrev: "Previous match",
+    searchNext: "Next match",
+    searchClose: "Close search",
+    searchNoMatch: "No matches",
+  },
+  "zh-CN": {
+    searchToggle: "搜索消息",
+    searchPlaceholder: "搜索…",
+    searchPrev: "上一个",
+    searchNext: "下一个",
+    searchClose: "关闭搜索",
+    searchNoMatch: "无匹配",
+  },
+};
 function NewSessionUpdateLink({
   label,
 }: {
@@ -260,7 +279,6 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
           fontSize: 12,
           textAlign: "left",
         }}
-        title={expanded ? t("chat.collapseProcess") : t("chat.expandProcess")}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
           <polyline points="4 2.5 7.5 6 4 9.5" />
@@ -279,7 +297,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
 }
 
 export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const isMobile = useIsMobile();
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
@@ -329,6 +347,15 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
   const sessionBusy = agentRunning || bashRunning;
   const [todosOpen, setTodosOpen] = useState(false);
   const todoCounts = countTodos(todoPhases);
+
+  // ── Session in-message search ────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
+  const [highlightedMsgIdx, setHighlightedMsgIdx] = useState<number | null>(null);
+
+  const tSearch = (key: string): string => LOCALE_TEXT[locale]?.[key] ?? LOCALE_TEXT.en[key] ?? key;
 
   // Stable callbacks for memoized child components (SubagentRoster / TodosPanel).
   // Inline arrows here would defeat their memo() on every ChatWindow re-render.
@@ -449,6 +476,125 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
     () => messages.filter((m) => m.role === "user" || m.role === "assistant"),
     [messages],
   );
+  const messageRefs = useMessageRefs(visibleMessages.length);
+
+  // ── Search match computation ─────────────────────────────────────────────
+  const searchMatches = useMemo(() => {
+    if (!debouncedQuery) return [];
+    const q = debouncedQuery.toLowerCase();
+    const results: { msgIdx: number }[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      let text: string | null = null;
+      if (msg.role === "user") {
+        text = getUserInputText(msg);
+      } else if (msg.role === "assistant") {
+        const blocks = (msg as AssistantMessage).content;
+        text = blocks
+          .filter((b) => b.type === "text")
+          .map((b) => b.text)
+          .join("\n");
+      }
+      if (text && text.toLowerCase().includes(q)) {
+        results.push({ msgIdx: i });
+      }
+    }
+    return results;
+  }, [messages, debouncedQuery]);
+
+  // ── 200ms debounce on search input ───────────────────────────────────────
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchInput);
+      setCurrentMatchIdx(0);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // ── Clear highlight after 1.6s ───────────────────────────────────────────
+  useEffect(() => {
+    if (highlightedMsgIdx === null) return;
+    const timer = setTimeout(() => setHighlightedMsgIdx(null), 1600);
+    return () => clearTimeout(timer);
+  }, [highlightedMsgIdx]);
+
+  // ── Search navigation ────────────────────────────────────────────────────
+  // Map message-array index → visible ref index (mirrors renderedMessages).
+  const visibleRefIndexByMessage = useMemo(() => {
+    const map = new Map<number, number>();
+    let refIdx = 0;
+    messages.forEach((msg, idx) => {
+      if (msg.role === "user" || msg.role === "assistant") {
+        map.set(idx, refIdx++);
+      }
+    });
+    return map;
+  }, [messages]);
+
+  const scrollToMatch = useCallback((matchIdx: number) => {
+    const match = searchMatches[matchIdx];
+    if (!match) return;
+    const refIdx = visibleRefIndexByMessage.get(match.msgIdx);
+    setHighlightedMsgIdx(match.msgIdx);
+    if (refIdx === undefined) return;
+    const el = messageRefs.current[refIdx];
+    if (!el) {
+      // Match is in a lazy-loaded (not yet rendered) message — reveal all
+      // history so its wrapper mounts; the effect below then scrolls to it.
+      setVisibleCount((current) => Math.max(current, messages.length * 2));
+    }
+  }, [searchMatches, messageRefs, visibleRefIndexByMessage, messages.length]);
+
+  const goToPrevMatch = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    const next = (currentMatchIdx - 1 + searchMatches.length) % searchMatches.length;
+    setCurrentMatchIdx(next);
+    scrollToMatch(next);
+  }, [searchMatches.length, currentMatchIdx, scrollToMatch]);
+
+  const goToNextMatch = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    const next = (currentMatchIdx + 1) % searchMatches.length;
+    setCurrentMatchIdx(next);
+    scrollToMatch(next);
+  }, [searchMatches.length, currentMatchIdx, scrollToMatch]);
+
+  // ── Scroll to the highlighted message once its wrapper is mounted ───────
+  useEffect(() => {
+    if (highlightedMsgIdx === null) return;
+    const refIdx = visibleRefIndexByMessage.get(highlightedMsgIdx);
+    if (refIdx === undefined) return;
+    const el = messageRefs.current[refIdx];
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [highlightedMsgIdx, visibleCount, visibleRefIndexByMessage, messageRefs]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchInput("");
+    setDebouncedQuery("");
+    setCurrentMatchIdx(0);
+    setHighlightedMsgIdx(null);
+  }, []);
+
+  // ── Open search and jump to first match ──────────────────────────────────
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    setHighlightedMsgIdx(null);
+  }, []);
+
+  // ── Close search on global Escape ────────────────────────────────────────
+  useEffect(() => {
+    if (!searchOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeSearch();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [searchOpen, closeSearch]);
   // Stable Map identity: `messages` doesn't change during streaming updates
   // (the streaming message lives in streamState), so memoized MessageViews
   // skip re-rendering on every message_update event. An inline `new Map()`
@@ -474,7 +620,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
     }
     return history.reverse();
   }, [messages]);
-  const messageRefs = useMessageRefs(visibleMessages.length);
+
   const revealHistoryForMinimap = useCallback(() => {
     setVisibleCount((current) => Math.max(current, messages.length * 2));
   }, [messages.length]);
@@ -679,7 +825,17 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
       );
       if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
       return (
-        <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+        <div
+          key={`${keyPrefix}-${idx}`}
+          ref={attachVisibleRef(idx, currentRefIdx)}
+          className="anim-message-enter"
+          style={{
+            outline: highlightedMsgIdx === idx ? "2px solid var(--accent)" : "2px solid transparent",
+            outlineOffset: 2,
+            borderRadius: 8,
+            transition: "outline-color 0.5s ease",
+          }}
+        >
           {view}
         </div>
       );
@@ -794,7 +950,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
   }, [
     messages, entryIds, visibleCount, modelNames, toolResultsMap, messageCwd,
     onOpenFile, handleFork, forkingEntryId, handleNavigate, handleEditContent,
-    session, sessionBusy, streamState.isStreaming, isNew, t,
+    session, sessionBusy, streamState.isStreaming, isNew, highlightedMsgIdx, t,
   ]);
 
   const chatInputElement = (
@@ -979,6 +1135,150 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
         </div>
       ) : (
       <>
+
+      {/* ── Search bar ──────────────────────────────────────────────────── */}
+      <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px`, marginTop: 4 }}>
+        <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "flex-end" }}>
+          {!searchOpen ? (
+            <button
+              type="button"
+              onClick={openSearch}
+              title={tSearch("searchToggle")}
+              aria-label={tSearch("searchToggle")}
+              style={{
+                width: 28, height: 28, padding: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                border: "none", borderRadius: 6,
+                background: "transparent", color: "var(--text-muted)",
+                cursor: "pointer", transition: "color 0.12s, background 0.12s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+            </button>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
+              <div style={{ position: "relative", display: "flex", alignItems: "center", flex: 1 }}>
+                <svg
+                  width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ position: "absolute", left: 8, color: "var(--text-dim)", pointerEvents: "none" }}
+                  aria-hidden="true"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") { closeSearch(); return; }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (e.shiftKey) goToPrevMatch();
+                      else goToNextMatch();
+                    }
+                  }}
+                  placeholder={tSearch("searchPlaceholder")}
+                  autoFocus
+                  style={{
+                    width: "100%", height: 30,
+                    padding: "0 32px 0 28px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    outline: "none",
+                    background: "var(--bg-panel)",
+                    color: "var(--text)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12,
+                  }}
+                />
+                {searchInput && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchInput("")}
+                    aria-label={tSearch("searchClose")}
+                    style={{
+                      position: "absolute", right: 4, width: 20, height: 20, padding: 0,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      border: "none", borderRadius: 4,
+                      background: "transparent", color: "var(--text-dim)",
+                      cursor: "pointer", fontSize: 13,
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              {debouncedQuery && (
+                <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-dim)", whiteSpace: "nowrap", minWidth: 36, textAlign: "center" }}>
+                  {searchMatches.length > 0 ? `${currentMatchIdx + 1}/${searchMatches.length}` : tSearch("searchNoMatch")}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={goToPrevMatch}
+                disabled={searchMatches.length === 0}
+                title={tSearch("searchPrev")}
+                aria-label={tSearch("searchPrev")}
+                style={{
+                  width: 26, height: 26, padding: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  border: "1px solid var(--border)", borderRadius: 5,
+                  background: "transparent", color: searchMatches.length === 0 ? "var(--text-dim)" : "var(--text-muted)",
+                  cursor: searchMatches.length === 0 ? "default" : "pointer",
+                  opacity: searchMatches.length === 0 ? 0.4 : 1,
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="18 15 12 9 6 15" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={goToNextMatch}
+                disabled={searchMatches.length === 0}
+                title={tSearch("searchNext")}
+                aria-label={tSearch("searchNext")}
+                style={{
+                  width: 26, height: 26, padding: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  border: "1px solid var(--border)", borderRadius: 5,
+                  background: "transparent", color: searchMatches.length === 0 ? "var(--text-dim)" : "var(--text-muted)",
+                  cursor: searchMatches.length === 0 ? "default" : "pointer",
+                  opacity: searchMatches.length === 0 ? 0.4 : 1,
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={closeSearch}
+                title={tSearch("searchClose")}
+                aria-label={tSearch("searchClose")}
+                style={{
+                  width: 26, height: 26, padding: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  border: "none", borderRadius: 5,
+                  background: "transparent", color: "var(--text-muted)",
+                  cursor: "pointer",
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
       <div className="relative flex min-w-0 flex-1 overflow-hidden">
         <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>

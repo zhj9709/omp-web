@@ -9,7 +9,7 @@ import { useTypewriterText } from "@/hooks/useTypewriterText";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
-import { isEditToolName } from "@/lib/tool-names";
+import { isEditToolName, isWriteToolName } from "@/lib/tool-names";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionToCommand } from "@/lib/slash-display";
@@ -386,8 +386,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             minWidth: 0,
             background: "var(--user-bg)",
             border: "1px solid color-mix(in srgb, var(--accent) 20%, transparent)",
+            borderLeft: "3px solid var(--accent)",
             borderRadius: 12,
-            padding: "8px 12px",
+            padding: "8px 12px 8px 10px",
             fontSize: 14,
             lineHeight: 1.6,
             color: "var(--text)",
@@ -1013,6 +1014,81 @@ function ThinkingBlock({ block, isStreaming, duration, sessionId, entryId, block
 }
 
 
+type ToolBadge = { icon: React.ReactNode; color: string };
+
+const toolIconProps = {
+  width: 14, height: 14, viewBox: "0 0 24 24", fill: "none",
+  stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round",
+} as const;
+
+function getToolBadge(toolName: string): ToolBadge {
+  const name = toolName.toLowerCase();
+
+  if (
+    name === "read" || name.startsWith("read_") || name.endsWith(".read") || name.endsWith("_read") ||
+    name === "view" || name.startsWith("view_") || name.endsWith(".view") || name.endsWith("_view")
+  ) {
+    return {
+      color: "var(--accent)",
+      icon: <svg {...toolIconProps}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>,
+    };
+  }
+
+  if (isEditToolName(name) || isWriteToolName(name)) {
+    return {
+      color: "var(--success)",
+      icon: <svg {...toolIconProps}><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>,
+    };
+  }
+
+  if (
+    name === "bash" || name === "shell" || name === "exec" ||
+    name.startsWith("bash_") || name.startsWith("shell_") || name.startsWith("exec_")
+  ) {
+    return {
+      color: "#a78bfa",
+      icon: <svg {...toolIconProps}><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>,
+    };
+  }
+
+  if (
+    name === "task" || name === "agent" ||
+    name.startsWith("task_") || name.startsWith("agent_") ||
+    name.endsWith(".task") || name.endsWith(".agent") || name.endsWith("_task") || name.endsWith("_agent")
+  ) {
+    return {
+      color: "var(--warning)",
+      icon: <svg {...toolIconProps}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>,
+    };
+  }
+
+  if (
+    name === "grep" || name === "search" || name === "browser" ||
+    name.startsWith("grep_") || name.startsWith("search_") || name.startsWith("web_") || name.startsWith("browser")
+  ) {
+    return {
+      color: "var(--accent)",
+      icon: <svg {...toolIconProps}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>,
+    };
+  }
+
+  return {
+    color: "var(--text-dim)",
+    icon: <svg {...toolIconProps}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>,
+  };
+}
+
+function countDiffStats(diff: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
 function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -1027,11 +1103,13 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
     : null;
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = result?.isError ?? false;
+  const badge = getToolBadge(block.toolName);
+  const diffStats = resultDiff ? countDiffStats(resultDiff.text) : null;
 
   return (
     <div
       style={{
-        borderRadius: 7,
+        borderRadius: "var(--radius-md)",
         overflow: "hidden",
         fontSize: 12,
         border: isError ? "1px solid var(--error-border)" : "1px solid var(--success-border)",
@@ -1056,12 +1134,21 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
           minWidth: 0,
         }}
       >
-        <span style={{ color: isError ? "var(--error)" : "var(--success)", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", color: badge.color, flexShrink: 0 }} aria-hidden="true">
+          {badge.icon}
+        </span>
+        <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
           {block.toolName}
         </span>
         <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
           {isStreamingInput ? t("chat.generatingToolInput") : getToolPreview(block)}
         </span>
+        {isEditTool && diffStats && (diffStats.added > 0 || diffStats.removed > 0) && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+            <span style={{ color: "var(--success)" }}>+{diffStats.added}</span>
+            <span style={{ color: "var(--error)" }}>-{diffStats.removed}</span>
+          </span>
+        )}
         {duration !== undefined && (
           <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
         )}

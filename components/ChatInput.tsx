@@ -475,6 +475,8 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const [queueDropdownOpen, setQueueDropdownOpen] = useState(false);
   const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [moreSubmenu, setMoreSubmenu] = useState<"tool" | "queue" | null>(null);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraft(draftKey)?.images) : []
   ));
@@ -505,6 +507,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const modelDropdownPanelRef = useRef<HTMLDivElement>(null);
   const toolDropdownRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const queueDropdownRef = useRef<HTMLDivElement>(null);
   const controlsMenuRef = useRef<HTMLDivElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
@@ -1427,9 +1430,20 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
       if (historyMenuRef.current && !historyMenuRef.current.contains(e.target as Node) && !textareaRef.current?.contains(e.target as Node)) {
         setHistoryMenuOpen(false);
       }
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false);
+        setMoreSubmenu(null);
+      }
+    };
+    const keyHandler = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") { setMoreMenuOpen(false); setMoreSubmenu(null); }
     };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("keydown", keyHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", keyHandler);
+    };
   }, []);
 
   useEffect(() => {
@@ -2610,7 +2624,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
               </div>
             )}
             {!isStreaming && onToolPresetChange && (
-              <div ref={toolDropdownRef} style={{ position: "relative" }}>
+              <div ref={toolDropdownRef} style={{ position: "relative", display: isMobile ? undefined : "none" }}>
                 <button
                   onClick={() => !isStreaming && setToolDropdownOpen((v) => !v)}
                   disabled={isStreaming}
@@ -2694,7 +2708,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
             )}
 
             {!isStreaming && onQueueModeChange && queueModes && (
-              <div ref={queueDropdownRef} style={{ position: "relative" }}>
+              <div ref={queueDropdownRef} style={{ position: "relative", display: isMobile ? undefined : "none" }}>
                 <button
                   onClick={() => !isStreaming && setQueueDropdownOpen((v) => !v)}
                   disabled={isStreaming}
@@ -2777,7 +2791,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
             )}
 
             {!isStreaming && onCompact && (
-              <div>
+              <div style={{ display: isMobile ? undefined : "none" }}>
                 <button
                   onClick={isCompacting ? onAbortCompaction : onCompact}
                   disabled={isStreaming && !isCompacting}
@@ -2818,7 +2832,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
               </div>
             )}
             {!isStreaming && onHandoff && (
-              <div>
+              <div style={{ display: isMobile ? undefined : "none" }}>
                 <button
                   onClick={onHandoff}
                   disabled={isHandingOff}
@@ -2893,7 +2907,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                  title={soundEnabled ? t("chat.disableSound") : t("chat.enableSound")}
                  aria-label={soundEnabled ? t("chat.disableSound") : t("chat.enableSound")}
                 style={{
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                  display: isMobile ? "flex" : "none", alignItems: "center", justifyContent: "center", gap: 5,
                   width: isMobile ? 32 : 32,
                   height: 32,
                   padding: 0,
@@ -2930,6 +2944,277 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                   </svg>
                 )}
               </button>
+            )}
+            {/* Desktop overflow menu */}
+            {!isMobile && (
+              <div ref={moreMenuRef} style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  title={t("chat.controls.more")}
+                  aria-label={t("chat.controls.more")}
+                  aria-expanded={moreMenuOpen}
+                  onClick={() => { setMoreMenuOpen((v) => { if (v) setMoreSubmenu(null); return !v; }); }}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 32, height: 32, padding: 0,
+                    background: moreMenuOpen ? "var(--bg-hover)" : "none",
+                    border: "none", borderRadius: 9,
+                    color: "var(--text-muted)",
+                    cursor: "pointer", fontSize: 16,
+                    transition: "background 0.12s, color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = moreMenuOpen ? "var(--bg-hover)" : "none";
+                    e.currentTarget.style.color = "var(--text-muted)";
+                  }}
+                >
+                  <svg width="16" height="14" viewBox="0 0 16 4" fill="currentColor" aria-hidden="true">
+                    <circle cx="2" cy="2" r="2" />
+                    <circle cx="8" cy="2" r="2" />
+                    <circle cx="14" cy="2" r="2" />
+                  </svg>
+                </button>
+                {moreMenuOpen && (
+                  <div style={{
+                    position: "absolute",
+                    bottom: "calc(100% + 6px)",
+                    right: 0,
+                    zIndex: 120,
+                    background: "var(--bg-panel)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    boxShadow: "var(--shadow-menu-up)",
+                    overflow: "hidden",
+                    minWidth: 220,
+                    maxHeight: "min(48vh, 360px)",
+                    display: "flex",
+                    flexDirection: "column",
+                  }}>
+                    <div style={{ overflowY: "auto", padding: 4 }}>
+                      {/* Tool preset */}
+                      {!isStreaming && onToolPresetChange && (
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setMoreSubmenu((v) => v === "tool" ? null : "tool")}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              width: "100%", padding: "8px 12px",
+                              border: "none", borderRadius: 6,
+                              background: "none",
+                              color: "var(--text)",
+                              cursor: "pointer", textAlign: "left", fontSize: 12.5,
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-selected)"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
+                              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                            </svg>
+                            <span style={{ flex: 1 }}>{t("chat.controls.toolPreset")}</span>
+                            <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{toolPresetLabel}</span>
+                          </button>
+                          {moreSubmenu === "tool" && (
+                            <div style={{ padding: "2px 6px 2px", borderTop: "1px solid var(--border)" }}>
+                              {TOOL_PRESETS.map((lvl) => {
+                                const preset = TOOL_PRESET_MAP[lvl];
+                                const isActive = (toolPreset ?? "default") === preset;
+                                let desc: string;
+                                if (lvl === "off") desc = t("chat.noTools");
+                                else if (lvl === "read-only") desc = t("chat.readOnlyTools", { count: 4 });
+                                else if (lvl === "default") desc = t("chat.builtInTools", { count: 4 });
+                                else desc = t("chat.allBuiltInTools");
+                                return (
+                                  <button
+                                    key={lvl}
+                                    type="button"
+                                    onClick={() => { setMoreSubmenu(null); if (!isActive) onToolPresetChange(preset); }}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: 8,
+                                      width: "100%", padding: "7px 10px",
+                                      border: "none", borderRadius: 6,
+                                      background: isActive ? "var(--bg-selected)" : "none",
+                                      color: "var(--text)",
+                                      cursor: "pointer", textAlign: "left", fontSize: 12,
+                                      fontWeight: isActive ? 600 : 400,
+                                    }}
+                                    onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-selected)"; }}
+                                    onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "none"; }}
+                                  >
+                                    {isActive
+                                      ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
+                                      : <span style={{ width: 10, flexShrink: 0 }} />}
+                                    <span style={{ flex: 1 }}>{lvl}</span>
+                                    <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{desc}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* Queue */}
+                      {!isStreaming && onQueueModeChange && queueModes && (
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setMoreSubmenu((v) => v === "queue" ? null : "queue")}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              width: "100%", padding: "8px 12px",
+                              border: "none", borderRadius: 6,
+                              background: "none",
+                              color: "var(--text)",
+                              cursor: "pointer", textAlign: "left", fontSize: 12.5,
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-selected)"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
+                              <line x1="8" y1="6" x2="21" y2="6" />
+                              <line x1="8" y1="12" x2="21" y2="12" />
+                              <line x1="8" y1="18" x2="21" y2="18" />
+                              <line x1="3" y1="6" x2="3.01" y2="6" />
+                              <line x1="3" y1="12" x2="3.01" y2="12" />
+                              <line x1="3" y1="18" x2="3.01" y2="18" />
+                            </svg>
+                            <span style={{ flex: 1 }}>{t("chat.queue")}</span>
+                            <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{[queueModes.steeringMode, queueModes.followUpMode, queueModes.interruptMode].join(" · ")}</span>
+                          </button>
+                          {moreSubmenu === "queue" && (
+                            <div style={{ padding: "2px 6px 2px", borderTop: "1px solid var(--border)" }}>
+                              <QueueModeRow
+                                label={t("chat.steering")}
+                                value={queueModes.steeringMode}
+                                options={[
+                                  { value: "one-at-a-time" as const, label: t("chat.oneAtATime") },
+                                  { value: "all" as const, label: t("chat.all") },
+                                ]}
+                                onChange={(v) => onQueueModeChange({ steeringMode: v })}
+                              />
+                              <QueueModeRow
+                                label={t("chat.followUp")}
+                                value={queueModes.followUpMode}
+                                options={[
+                                  { value: "one-at-a-time" as const, label: t("chat.oneAtATime") },
+                                  { value: "all" as const, label: t("chat.all") },
+                                ]}
+                                onChange={(v) => onQueueModeChange({ followUpMode: v })}
+                              />
+                              <QueueModeRow
+                                label={t("chat.interrupt")}
+                                value={queueModes.interruptMode}
+                                options={[
+                                  { value: "immediate" as const, label: t("chat.immediate") },
+                                  { value: "wait" as const, label: t("chat.wait") },
+                                ]}
+                                onChange={(v) => onQueueModeChange({ interruptMode: v })}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* Compact */}
+                      {!isStreaming && onCompact && (
+                        <button
+                          type="button"
+                          onClick={() => { setMoreMenuOpen(false); setMoreSubmenu(null); if (isCompacting) { onAbortCompaction?.(); } else { onCompact(); } }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            width: "100%", padding: "8px 12px",
+                            border: "none", borderRadius: 6,
+                            background: "none",
+                            color: "var(--text)",
+                            cursor: "pointer", textAlign: "left", fontSize: 12.5,
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-selected)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                        >
+                          {isCompacting ? (
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style={{ flexShrink: 0, color: "var(--text-muted)" }}><rect x="2" y="2" width="6" height="6" rx="1" /></svg>
+                          ) : (
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
+                              <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
+                              <line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" />
+                            </svg>
+                          )}
+                          <span style={{ flex: 1 }}>{t("chat.compact")}</span>
+                          {isCompacting && <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{t("chat.compacting")}</span>}
+                        </button>
+                      )}
+                      {/* Handoff */}
+                      {!isStreaming && onHandoff && (
+                        <button
+                          type="button"
+                          onClick={() => { setMoreMenuOpen(false); setMoreSubmenu(null); onHandoff(); }}
+                          disabled={isHandingOff}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            width: "100%", padding: "8px 12px",
+                            border: "none", borderRadius: 6,
+                            background: "none",
+                            color: "var(--text)",
+                            cursor: isHandingOff ? "progress" : "pointer",
+                            textAlign: "left", fontSize: 12.5,
+                            opacity: isHandingOff ? 0.7 : 1,
+                          }}
+                          onMouseEnter={(e) => { if (!isHandingOff) e.currentTarget.style.background = "var(--bg-selected)"; }}
+                          onMouseLeave={(e) => { if (!isHandingOff) e.currentTarget.style.background = "none"; }}
+                        >
+                          {isHandingOff ? (
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)", animation: "spin 1s linear infinite" }}>
+                              <circle cx="12" cy="12" r="9" strokeDasharray="56" strokeDashoffset="40" />
+                            </svg>
+                          ) : (
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
+                              <path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                            </svg>
+                          )}
+                          <span style={{ flex: 1 }}>{t("chat.handoff")}</span>
+                          {isHandingOff && <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{t("chat.handingOff")}</span>}
+                        </button>
+                      )}
+                      {/* Sound */}
+                      {onSoundToggle !== undefined && (
+                        <button
+                          type="button"
+                          onClick={onSoundToggle}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            width: "100%", padding: "8px 12px",
+                            border: "none", borderRadius: 6,
+                            background: "none",
+                            color: "var(--text)",
+                            cursor: "pointer", textAlign: "left", fontSize: 12.5,
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-selected)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                        >
+                          {soundEnabled ? (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
+                              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                            </svg>
+                          ) : (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
+                              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                              <line x1="23" y1="9" x2="17" y2="15" />
+                              <line x1="17" y1="9" x2="23" y2="15" />
+                            </svg>
+                          )}
+                          <span style={{ flex: 1 }}>{t("chat.controls.sound")}</span>
+                          <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{soundEnabled ? t("chat.controls.soundOn") : t("chat.controls.soundOff")}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
             {isMobile && controlsMenuOpen && (
               <button
