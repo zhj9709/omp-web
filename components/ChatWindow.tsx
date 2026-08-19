@@ -1124,6 +1124,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
             unavailable={subagentsUnavailable}
             onRefresh={handleRefreshSubagents}
             loadTranscript={loadSubagentTranscript}
+            sessionId={session?.id ?? sessionIdRef.current ?? undefined}
           />
           {!searchOpen ? (
             <button

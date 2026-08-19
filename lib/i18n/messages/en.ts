@@ -578,6 +578,7 @@ export const enLocale: LocalePlugin = {
     "subagent.noTranscript": "No transcript available.",
     "subagent.message": "message",
     "subagent.emptyMessage": "[empty]",
+    "subagent.history": "Spawned (from session file)",
     "settings.title": "⚙ Settings",
     "settings.searchPlaceholder": "Search settings…",
     "settings.effectiveNewSessions": "Changes apply to new sessions after saving",

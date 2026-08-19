@@ -3,7 +3,9 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   subagentIsActive,
+  spawnSummary,
   type SubagentInfo,
+  type SubagentSpawn,
   type SubagentTranscript,
   type SubagentTranscriptMessage,
 } from "@/lib/subagents";
@@ -198,17 +200,21 @@ export const SubagentRoster = memo(function SubagentRoster({
   unavailable = false,
   onRefresh,
   loadTranscript,
+  sessionId,
 }: {
   subagents: SubagentInfo[];
   unavailable?: boolean;
   onRefresh: () => void;
   loadTranscript: (subagentId: string) => Promise<SubagentTranscript | null>;
+  sessionId?: string | null;
 }) {
   const { t } = useI18n();
   const [open, setOpenState] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<SubagentTranscript | null>(null);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
+  const [spawns, setSpawns] = useState<SubagentSpawn[]>([]);
+  const [expandedSpawn, setExpandedSpawn] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -226,7 +232,31 @@ export const SubagentRoster = memo(function SubagentRoster({
     if (readPanelOpen()) setOpenState(true);
   }, []);
 
+  // Disk fallback: live subagent state only exists in the executing process,
+  // so CLI-driven sessions show an empty live roster. The spawn records are
+  // facts in the session file — load them whenever the panel opens.
+  useEffect(() => {
+    if (!open || !sessionId) return;
+    let alive = true;
+    setSpawns([]);
+    setExpandedSpawn(null);
+    void fetch(`/api/sessions/${encodeURIComponent(sessionId)}/subagents`, { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ spawns?: SubagentSpawn[] }>) : null))
+      .then((d) => {
+        if (alive) setSpawns(d?.spawns ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [open, sessionId]);
+
   const activeCount = subagents.filter(subagentIsActive).length;
+
+  // Live entries win by name; spawn records the live track doesn't know about
+  // (e.g. spawned by a CLI process) are listed as history below.
+  const liveLabels = new Set(subagents.map((s) => s.label));
+  const historicalSpawns = spawns.filter((sp) => !sp.name || !liveLabels.has(sp.name));
 
   const close = useCallback(() => {
     setOpen(false);
@@ -406,14 +436,15 @@ export const SubagentRoster = memo(function SubagentRoster({
                     {t("subagent.loading")}
                   </div>
                 )}
-                {subagents.length === 0 ? (
+                {subagents.length === 0 && historicalSpawns.length === 0 ? (
                   <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "8px 10px" }}>
                     {unavailable
                       ? t("subagent.monitorUnavailable")
                       : t("subagent.empty")}
                   </div>
                 ) : (
-                  subagents.map((info) => (
+                  <>
+                  {subagents.map((info) => (
                     <button
                       key={info.id}
                       type="button"
@@ -490,7 +521,61 @@ export const SubagentRoster = memo(function SubagentRoster({
                         {info.status}
                       </span>
                     </button>
-                  ))
+                  ))}
+                  {historicalSpawns.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-dim)", padding: "8px 10px 2px" }}>
+                        {t("subagent.history")}
+                      </div>
+                      {historicalSpawns.map((spawn) => {
+                        const expanded = expandedSpawn === spawn.callId;
+                        return (
+                          <div key={spawn.callId} style={{ borderRadius: 8 }}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedSpawn(expanded ? null : spawn.callId)}
+                              style={{
+                                display: "flex", alignItems: "center", gap: 8, width: "100%",
+                                textAlign: "left", background: "none", border: "none", borderRadius: 8,
+                                padding: "8px 10px", cursor: "pointer", color: "var(--text)",
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                            >
+                              <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--text-dim)", flexShrink: 0 }} />
+                              <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
+                                <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {spawn.name ?? spawn.agent ?? "subagent"}
+                                </span>
+                                <span style={{ fontSize: 10, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {spawnSummary(spawn)}
+                                </span>
+                              </span>
+                              {spawn.spawnedAt && (
+                                <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                                  {new Date(spawn.spawnedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              )}
+                            </button>
+                            {expanded && (
+                              <pre
+                                className="anim-fade-in"
+                                style={{
+                                  margin: "0 10px 8px", padding: "8px 10px", fontSize: 11, lineHeight: 1.5,
+                                  background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                                  color: "var(--text-muted)", whiteSpace: "pre-wrap", wordBreak: "break-word",
+                                  maxHeight: 180, overflowY: "auto",
+                                }}
+                              >
+                                {spawn.task}
+                              </pre>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                  </>
                 )}
               </div>
             </>

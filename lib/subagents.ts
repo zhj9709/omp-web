@@ -184,3 +184,24 @@ export function subagentIsActive(info: SubagentInfo): boolean {
     info.status === "in_progress"
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Disk-derived spawn records (see lib/subagent-history.ts)            */
+/* ------------------------------------------------------------------ */
+
+/** A subagent spawn reconstructed from a session file's `task` tool call. */
+export interface SubagentSpawn {
+  /** Tool call id (e.g. "task_0"), with the item index for batch spawns. */
+  callId: string;
+  name: string | null;
+  agent: string | null;
+  effort: string | null;
+  task: string;
+  spawnedAt: string | null;
+}
+
+/** One-line summary for list display (first non-empty line of the task). */
+export function spawnSummary(spawn: SubagentSpawn): string {
+  const line = spawn.task.split("\n").find((l) => l.trim().length > 0) ?? "";
+  return line.trim();
+}

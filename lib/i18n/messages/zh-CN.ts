@@ -578,6 +578,7 @@ export const zhCNLocale: LocalePlugin = {
     "subagent.noTranscript": "暂无转录内容。",
     "subagent.message": "消息",
     "subagent.emptyMessage": "[空]",
+    "subagent.history": "启动记录（来自会话文件）",
     "settings.title": "⚙ 设置",
     "settings.searchPlaceholder": "搜索设置…",
     "settings.effectiveNewSessions": "更改保存后对新会话生效",

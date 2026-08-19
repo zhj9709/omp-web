@@ -1269,7 +1269,6 @@ export function AppShell() {
             mobileToolbarRef={mobileToolbarRef}
             handleMobileToolbarMoreToggle={handleMobileToolbarMoreToggle}
             setPaletteOpen={setPaletteOpen}
-            handleOpenSessionById={handleOpenSessionById}
           />
           {/* Top panel dropdown — shared, only one active at a time */}
           {activeTopPanel && topPanelPos && (

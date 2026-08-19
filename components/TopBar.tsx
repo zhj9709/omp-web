@@ -1,7 +1,6 @@
 "use client";
 
 import { BranchNavigator } from "./BranchNavigator";
-import { RunningCenter } from "./RunningCenter";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ProjectTrustStatus } from "@/lib/api-types";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -50,7 +49,6 @@ export interface TopBarProps {
   mobileToolbarRef: React.RefObject<HTMLDivElement | null>;
   handleMobileToolbarMoreToggle: () => void;
   setPaletteOpen: (open: boolean) => void;
-  handleOpenSessionById: (sessionId: string) => void;
 }
 
 export function TopBar({
@@ -89,7 +87,6 @@ export function TopBar({
   mobileToolbarRef,
   handleMobileToolbarMoreToggle,
   setPaletteOpen,
-  handleOpenSessionById,
 }: TopBarProps) {
   const renderThemeButton = (mobile: boolean) => (
     <button type="button"
@@ -765,7 +762,6 @@ export function TopBar({
                 <line x1="21" y1="21" x2="16.5" y2="16.5" />
               </svg>
             </button>
-            <RunningCenter onOpenSession={handleOpenSessionById} />
             {renderSessionStatsButton(false)}
           </>
         )}
