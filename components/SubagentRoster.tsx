@@ -14,12 +14,12 @@ const STATUS_COLORS: Record<string, string> = {
   running: "var(--accent)",
   working: "var(--accent)",
   in_progress: "var(--accent)",
-  completed: "#22c55e",
-  done: "#22c55e",
-  succeeded: "#22c55e",
-  failed: "#ef4444",
-  error: "#ef4444",
-  aborted: "#f59e0b",
+  completed: "var(--success)",
+  done: "var(--success)",
+  succeeded: "var(--success)",
+  failed: "var(--error)",
+  error: "var(--error)",
+  aborted: "var(--warning)",
   parked: "var(--text-muted)",
   idle: "var(--text-muted)",
   unknown: "var(--text-muted)",
@@ -181,6 +181,18 @@ function TranscriptView({
   );
 }
 
+const PANEL_STORAGE_KEY = "omp-subagent-panel-open";
+
+/** Panel open state survives ChatWindow remounts (session switches). */
+function readPanelOpen(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(PANEL_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export const SubagentRoster = memo(function SubagentRoster({
   subagents,
   unavailable = false,
@@ -193,12 +205,26 @@ export const SubagentRoster = memo(function SubagentRoster({
   loadTranscript: (subagentId: string) => Promise<SubagentTranscript | null>;
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<SubagentTranscript | null>(null);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+
+  const setOpen = useCallback((next: boolean) => {
+    setOpenState(next);
+    try {
+      window.sessionStorage.setItem(PANEL_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      // Best-effort persistence.
+    }
+  }, []);
+
+  // Restore the persisted open state after mount (SSR renders closed).
+  useEffect(() => {
+    if (readPanelOpen()) setOpenState(true);
+  }, []);
 
   const activeCount = subagents.filter(subagentIsActive).length;
 
@@ -207,7 +233,7 @@ export const SubagentRoster = memo(function SubagentRoster({
     setSelectedId(null);
     setTranscript(null);
     setLoadingTranscript(false);
-  }, []);
+  }, [setOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -253,71 +279,73 @@ export const SubagentRoster = memo(function SubagentRoster({
   const showTranscript = selectedId !== null;
 
   return (
-    <>
-      {(open || subagents.length > 0) && (
+    <div style={{ position: "relative", flexShrink: 0 }}>
       <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => (open ? close() : setOpen(true))}
         aria-label={t("subagent.title")}
+        aria-expanded={open}
         title={unavailable ? t("subagent.unavailable") : t("subagent.title")}
         className="toolbar-ghost-btn"
         style={{
-          position: "absolute",
-          top: 10,
-          left: 12,
-          zIndex: 45,
           display: "flex",
           alignItems: "center",
-          gap: 6,
+          justifyContent: "center",
+          gap: 5,
+          height: 28,
+          minWidth: 28,
+          padding: activeCount > 0 ? "0 8px" : 0,
+          border: "none",
           borderRadius: 6,
-          padding: "5px 10px",
           fontSize: 12,
           cursor: "pointer",
           background: open ? "var(--bg-hover)" : undefined,
           color: open ? "var(--text)" : undefined,
         }}
       >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="5" y="7" width="14" height="12" rx="2" />
           <path d="M12 7V4" /><circle cx="12" cy="3" r="1" />
           <line x1="9" y1="12" x2="9" y2="12.01" /><line x1="15" y1="12" x2="15" y2="12.01" />
         </svg>
-        <span>{t("subagent.title")}</span>
         {activeCount > 0 && (
           <span
             style={{
               background: "var(--accent)",
               color: "var(--bg)",
               borderRadius: 999,
-              minWidth: 18,
-              height: 18,
+              minWidth: 16,
+              height: 16,
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: 11,
+              fontSize: 10.5,
               fontWeight: 700,
               padding: "0 4px",
+              fontVariantNumeric: "tabular-nums",
             }}
           >
             {activeCount}
           </span>
         )}
       </button>
-      )}
 
       {open && (
         <div
           ref={panelRef}
           style={{
             position: "absolute",
-            top: 48,
-            left: 12,
+            top: "calc(100% + 6px)",
+            right: 0,
             zIndex: 45,
             width: 360,
             maxWidth: "calc(100vw - 24px)",
             maxHeight: "min(480px, calc(100vh - 96px))",
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
-            borderRadius: 12,
-            boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
+            borderRadius: "var(--radius-lg)",
+            boxShadow: "var(--shadow-modal)",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
@@ -469,6 +497,6 @@ export const SubagentRoster = memo(function SubagentRoster({
           )}
         </div>
       )}
-    </>
+    </div>
   );
 });

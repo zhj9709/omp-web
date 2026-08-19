@@ -345,6 +345,13 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
     if (sid) void refreshSubagents(sid);
     // sessionIdRef is a stable ref object; listed to satisfy exhaustive-deps.
   }, [refreshSubagents, sessionIdRef]);
+
+  // Populate the roster on mount / session switch — otherwise the list stays
+  // empty until the next SSE lifecycle event arrives and looks like the
+  // subagents were lost.
+  useEffect(() => {
+    handleRefreshSubagents();
+  }, [session?.id, handleRefreshSubagents]);
   const handleTodosClose = useCallback(() => setTodosOpen(false), []);
 
   // Auto-open the todo panel while open tasks exist; TodosPanel closes itself
@@ -1073,14 +1080,6 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
         <NoticeShelf notices={notices} floating />
       </div>
 
-      <SubagentRoster
-        subagents={subagents}
-        unavailable={subagentsUnavailable}
-        onRefresh={handleRefreshSubagents}
-        loadTranscript={loadSubagentTranscript}
-      />
-
-
       {isEmptyNew ? (
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
           <div className="w-full max-w-[820px]">
@@ -1119,7 +1118,13 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
 
       {/* ── Search bar ──────────────────────────────────────────────────── */}
       <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px`, marginTop: 4 }}>
-        <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
+          <SubagentRoster
+            subagents={subagents}
+            unavailable={subagentsUnavailable}
+            onRefresh={handleRefreshSubagents}
+            loadTranscript={loadSubagentTranscript}
+          />
           {!searchOpen ? (
             <button
               type="button"
