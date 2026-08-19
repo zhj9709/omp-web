@@ -20,36 +20,42 @@
 
 :root {
   --bg: #ffffff;
-  --bg-panel: #f5f5f5;
-  --bg-hover: #eeeeee;
-  --bg-selected: #e8e8e8;
-  --border: #e0e0e0;
-  --text: #1a1a1a;
-  --text-muted: #6b7280;
-  --text-dim: #9ca3af;
+  --bg-panel: #f6f7f9;
+  --bg-hover: #eef0f3;
+  --bg-selected: #e6e9ee;
+  --border: #e3e6ea;
+  --text: #181a1f;
+  --text-muted: #5c6470;
+  --text-dim: #98a1ad;
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
   --user-bg: #eff6ff;
   --assistant-bg: #ffffff;
   --tool-bg: #f9fafb;
   --bg-subtle: rgba(0,0,0,0.03);
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-pop: 0 8px 28px rgba(24, 26, 31, 0.12);
 }
 
 html.dark {
-  --bg: #1a1a1a;
-  --bg-panel: #242424;
-  --bg-hover: #2e2e2e;
-  --bg-selected: #383838;
-  --border: #3a3a3a;
-  --text: #e8e8e8;
-  --text-muted: #9ca3af;
-  --text-dim: #6b7280;
+  --bg: #191b21;
+  --bg-panel: #23262e;
+  --bg-hover: #2c303a;
+  --bg-selected: #363b47;
+  --border: #383d49;
+  --text: #e8eaf0;
+  --text-muted: #a0a7b4;
+  --text-dim: #6d7482;
   --accent: #60a5fa;
   --accent-hover: #93c5fd;
   --user-bg: #1e293b;
-  --assistant-bg: #1a1a1a;
-  --tool-bg: #1f2937;
+  --assistant-bg: #191b21;
+  --tool-bg: #1f232b;
   --bg-subtle: rgba(255,255,255,0.04);
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-pop: 0 10px 32px rgba(0, 0, 0, 0.45);
 }
 
 .catppuccin-file-icon {
@@ -331,6 +337,32 @@ button.extension-widget-trigger:focus-visible {
   background: var(--text-dim);
 }
 
+/* Unified input focus: soft accent ring instead of the browser default. */
+textarea:focus,
+input:focus,
+select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border)) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+
+/* Quiet toolbar button: transparent until hovered, matches the top bar. */
+.toolbar-ghost-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  transition: background 0.12s, color 0.12s;
+}
+.toolbar-ghost-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 :root {
   --font-mono: var(--font-noto-mono), 'JetBrains Mono', 'Fira Code', 'Consolas', ui-monospace, 'PingFang SC', 'Microsoft YaHei', monospace;
 }
@@ -594,17 +626,21 @@ pre, code {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  margin: 6px 0;
+  margin: 8px 0;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 10px;
   overflow: hidden;
   background: var(--bg);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 42%, transparent);
 }
+.markdown-code-block > pre {
+  border-radius: 0 0 10px 10px;
+}
 .markdown-code-header {
-  padding: 5px 10px;
+  padding: 6px 12px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
+  border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   color: var(--text-dim);
   font-size: 11px;
   display: flex;

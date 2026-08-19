@@ -94,14 +94,14 @@ app/api/
   git/status/route.ts                      GET git status for a cwd
   home/route.ts                            GET user home directory
   models/route.ts                          GET models (models.db + config.yml + models.yaml, sanitized)
-  models-config/route.ts                   GET read config | PUT — 501 feature_unavailable
+  models-config/route.ts                   GET read config | PUT deep-merge write (keys preserved)
   models-config/catalog/route.ts           GET models.dev pricing presets
   models-config/discover/route.ts          POST fetch a provider's upstream model list
   models-config/test/route.ts              POST — 501 feature_unavailable
   plugins/route.ts                         GET/POST package plugins via `omp plugin` CLI
   project-trust/route.ts                   GET fixed "not applicable" | POST — 501 feature_unavailable
   sessions/route.ts                        GET list all sessions
-  sessions/[id]/route.ts                   GET | PATCH/DELETE — 501 feature_unavailable
+  sessions/[id]/route.ts                        GET | PATCH rename | DELETE (cascade-reparents children)
   sessions/[id]/auto-name/route.ts         POST generate title from first user message
   sessions/[id]/context/route.ts           GET ?leafId= — context for a specific leaf
   sessions/[id]/entries/[entryId]/thinking/route.ts  GET a thinking block
@@ -121,9 +121,7 @@ These return `{ error: ..., feature_unavailable: true }` (or an equivalent messa
 must stay honest in the UI — they are not implemented in OMP RPC mode:
 
 - `auth/api-key/[provider]` — API-key management (configure in `models.yaml` or use the OMP CLI).
-- `models-config` PUT — writing model config (edit `models.yaml` directly).
 - `models-config/test` — model connectivity testing (use the OMP CLI).
-- `sessions/[id]` PATCH (rename) / DELETE — session rename/delete.
 - `project-trust` POST — OMP v17.3.5 has no project-trust system (GET returns a fixed
   "not applicable" status; no trust gate exists).
 - `plugins` POST with `action: "update"` — `omp plugin upgrade` may require interactive
@@ -223,6 +221,14 @@ files live at `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`.
 `~/.omp/agent/`. `models.yaml` parsing strips API keys — keys are never returned to the
 client. The only place a stored key is read is `model-discovery-auth.ts`, server-side, to
 make an authenticated upstream model-list request.
+
+`PUT /api/models-config` writes through `lib/models-config-writer.ts`: a deep merge onto
+the on-disk yaml. Client-supplied scalars win; credentials and nested blocks the client
+never sees (`apiKey`, `headers`, `discovery`, `modelOverrides`) are inherited from disk;
+`""`/`undefined` never overwrite a stored credential; `models` is written only when it
+differs from the current models.db listing (order-insensitive compare), so an untouched
+save never freezes a `discovery: proxy` provider into a static list. Every write makes a
+timestamped `.bak` and swaps the file atomically at mode `0600`.
 
 ### Skills are discovered from the filesystem, not settings.json
 OMP v17.3.5 stores skills at:

@@ -838,9 +838,7 @@ function AssistantMessageView({
         display: "flex", alignItems: "center", gap: 8, marginTop: 4,
       }}>
         {message.usage && !isStreaming && (
-          <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-            {formatUsage(message.usage)}
-          </div>
+          <UsageMeta usage={message.usage} duration={message.duration} ttft={message.ttft} />
         )}
         {textContent && !isStreaming && (
           <button
@@ -1691,20 +1689,84 @@ function getToolPreview(block: ToolCallContent): string {
   return String(first).slice(0, 120);
 }
 
-function formatUsage(usage: {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost: { total: number };
-}): string {
-  const parts = [];
-  if (usage.input) parts.push(`${usage.input.toLocaleString()} in`);
-  if (usage.output) parts.push(`${usage.output.toLocaleString()} out`);
-  if (usage.cacheRead) parts.push(`${usage.cacheRead.toLocaleString()} cache R`);
-  if (usage.cacheWrite) parts.push(`${usage.cacheWrite.toLocaleString()} cache W`);
-  if (usage.cost?.total) parts.push(`$${usage.cost.total.toFixed(4)}`);
-  return parts.join(" · ");
+function formatCompactTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 100_000) return `${Math.round(n / 1000)}k`;
+  if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`;
+  return n.toLocaleString();
+}
+
+function formatDurationMs(ms: number): string {
+  const s = ms / 1000;
+  if (s < 60) return s < 10 ? `${s.toFixed(1)}s` : `${Math.round(s)}s`;
+  return `${Math.floor(s / 60)}m${Math.round(s % 60)}s`;
+}
+
+const metaIconProps = {
+  width: 10, height: 10, viewBox: "0 0 24 24", fill: "none",
+  stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round",
+} as const;
+
+/**
+ * Completed-turn meta strip: duration, token flow, cache, cost, real rate.
+ * Quiet by design — tabular numbers, 10px line icons, full precision lives in
+ * the hover title. Replaces the old `160 in · 630 out` prose line.
+ */
+function UsageMeta({ usage, duration, ttft }: {
+  usage: NonNullable<AssistantMessage["usage"]>;
+  duration?: number;
+  ttft?: number;
+}) {
+  const secs = duration !== undefined ? duration / 1000 : undefined;
+  const rate = secs !== undefined && secs > 0 ? usage.output / secs : undefined;
+  const title = [
+    duration !== undefined
+      ? `${formatDurationMs(duration)} total${ttft !== undefined ? ` · first token ${formatDurationMs(ttft)}` : ""}`
+      : null,
+    `${usage.input.toLocaleString()} in · ${usage.output.toLocaleString()} out · ${usage.cacheRead.toLocaleString()} cache read · ${usage.cacheWrite.toLocaleString()} cache write`,
+    usage.cost?.total ? `$${usage.cost.total.toFixed(4)}` : null,
+    rate !== undefined ? `${rate.toFixed(1)} tok/s` : null,
+  ].filter(Boolean).join("\n");
+
+  const itemStyle = { display: "inline-flex", alignItems: "center", gap: 3 } as const;
+  return (
+    <div
+      title={title}
+      style={{
+        display: "flex", alignItems: "center", gap: 10,
+        fontSize: 11, color: "var(--text-dim)",
+        fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+      }}
+    >
+      {secs !== undefined && (
+        <span style={itemStyle}>
+          <svg {...metaIconProps}><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15.5 14" /></svg>
+          {formatDurationMs(secs * 1000)}
+        </span>
+      )}
+      <span style={itemStyle}>
+        <svg {...metaIconProps}><line x1="12" y1="4" x2="12" y2="19" /><polyline points="6 13 12 19 18 13" /></svg>
+        {formatCompactTokens(usage.input)}
+      </span>
+      <span style={itemStyle}>
+        <svg {...metaIconProps}><line x1="12" y1="20" x2="12" y2="5" /><polyline points="6 11 12 5 18 11" /></svg>
+        {formatCompactTokens(usage.output)}
+      </span>
+      {usage.cacheRead > 0 && (
+        <span style={itemStyle} title={`${usage.cacheRead.toLocaleString()} cache read`}>
+          <svg {...metaIconProps}><path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" /></svg>
+          {formatCompactTokens(usage.cacheRead)}
+        </span>
+      )}
+      {usage.cost?.total > 0 && <span style={itemStyle}>${usage.cost.total.toFixed(4)}</span>}
+      {rate !== undefined && rate > 0 && (
+        <span style={itemStyle}>
+          <svg {...metaIconProps}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>
+          {Math.round(rate)} t/s
+        </span>
+      )}
+    </div>
+  );
 }
 
 function BashExecutionView({ message, sessionId }: { message: BashExecutionMessage; sessionId?: string }) {

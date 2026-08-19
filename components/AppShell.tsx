@@ -10,14 +10,16 @@ import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, saveFileViewerState } from "./file-tab-state";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
-import dynamic from "next/dynamic";
-
-// Settings/config panels mount only when opened — keep their bundles (model
-// provider icons are the heaviest) out of the chat first paint.
-const ModelsConfig = dynamic(() => import("./ModelsConfig").then((m) => m.ModelsConfig));
-const SkillsConfig = dynamic(() => import("./SkillsConfig").then((m) => m.SkillsConfig));
-const PluginsConfig = dynamic(() => import("./PluginsConfig").then((m) => m.PluginsConfig));
-const CollabConfig = dynamic(() => import("./CollabConfig").then((m) => m.CollabConfig));
+// Config panels are statically imported: dynamic() chunks 404 whenever the
+// dev server recompiles behind an open page, and Next.js recovers from the
+// failed chunk load with a full-page reload — exactly the "clicking Models /
+// Settings refreshes the page" bug. Static imports trade a heavier first
+// bundle for instant, reload-proof panel opens.
+import { ModelsConfig } from "./ModelsConfig";
+import { SettingsConfig } from "./SettingsConfig";
+import { SkillsConfig } from "./SkillsConfig";
+import { PluginsConfig } from "./PluginsConfig";
+import { CollabConfig } from "./CollabConfig";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -104,6 +106,7 @@ export function AppShell() {
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
+  const [settingsConfigOpen, setSettingsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [collabConfigOpen, setCollabConfigOpen] = useState(false);
@@ -957,6 +960,17 @@ export function AppShell() {
             ),
           },
           {
+            label: "设置",
+            onClick: () => setSettingsConfigOpen(true),
+            disabled: false,
+            icon: (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            ),
+          },
+          {
              label: translate("common.skills"),
             onClick: () => setSkillsConfigOpen(true),
             disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
@@ -995,13 +1009,14 @@ export function AppShell() {
             ),
           },
         ] as { label: string; onClick: () => void; disabled: boolean; icon: React.ReactNode }[]).map(({ label, onClick, disabled, icon }) => (
-          <button
+          <button type="button"
             key={label}
             onClick={onClick}
             disabled={disabled}
             title={label}
             style={{
-              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              whiteSpace: "nowrap",
               height: 32, padding: 0, background: "none", border: "none",
               borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
               fontSize: 12, opacity: disabled ? 0.35 : 1,
@@ -1019,8 +1034,7 @@ export function AppShell() {
   );
 
   const renderThemeButton = (mobile: boolean) => (
-    <button
-      type="button"
+    <button type="button"
       onClick={(event) => {
         const rect = event.currentTarget.getBoundingClientRect();
         toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
@@ -1061,9 +1075,8 @@ export function AppShell() {
   );
 
   const renderLanguageButton = (mobile: boolean) => (
-    <button
+    <button type="button"
       ref={languageBtnRef}
-      type="button"
       onClick={() => toggleTopPanel("language", mobile)}
       title={translate("common.language")}
       aria-label={translate("common.language")}
@@ -1108,8 +1121,7 @@ export function AppShell() {
   const renderProjectTrustWarning = (mobileBanner: boolean) => {
     if (!showChat || !projectTrust?.requiresTrust || projectTrust.trusted) return null;
     return (
-      <button
-        type="button"
+      <button type="button"
         onClick={() => {
           setProjectTrustError(null);
           setProjectTrustDialogOpen(true);
@@ -1163,8 +1175,7 @@ export function AppShell() {
     if (!mobile && !showChat) return null;
     return (
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <button
-          type="button"
+        <button type="button"
           onClick={() => {
             handleViewFullHistory();
             if (mobile) setMobileToolbarMoreOpen(true);
@@ -1249,8 +1260,7 @@ export function AppShell() {
                 : translate("title.generateSession");
 
           return (
-            <button
-              type="button"
+            <button type="button"
               onClick={() => {
                 void handleAutoName();
                 if (mobile) setMobileToolbarMoreOpen(true);
@@ -1303,8 +1313,7 @@ export function AppShell() {
           );
         })()}
         {mobile ? (
-          <button
-            type="button"
+          <button type="button"
             onClick={() => toggleTopPanel("branches", true)}
             title={translate("i18n.branches")}
             aria-label={translate("i18n.branches")}
@@ -1340,9 +1349,8 @@ export function AppShell() {
             hasSession
           />
         )}
-        <button
+        <button type="button"
           ref={systemBtnRef}
-          type="button"
           onClick={() => handleSystemPromptToggle(mobile)}
           disabled={mobile && !showChat}
           title={translate("system.prompt")}
@@ -1430,8 +1438,7 @@ export function AppShell() {
     );
 
     return (
-      <button
-        type="button"
+      <button type="button"
         onClick={() => toggleTopPanel("session")}
         disabled={!showChat || covered}
         tabIndex={covered ? -1 : undefined}
@@ -1550,8 +1557,7 @@ export function AppShell() {
   const renderMainFileToggle = (mobile: boolean) => {
     const covered = mobile && mobileToolbarMoreOpen;
     return (
-      <button
-        type="button"
+      <button type="button"
         onClick={handleRightPanelToggle}
         disabled={covered}
         tabIndex={covered ? -1 : undefined}
@@ -1726,7 +1732,7 @@ export function AppShell() {
         {/* Top bar with sidebar toggle */}
         <div ref={topBarRef} style={{ flexShrink: 0, background: "var(--bg-panel)" }}>
         <div style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
-          <button
+          <button type="button"
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
              aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
@@ -1762,8 +1768,7 @@ export function AppShell() {
                 height: "100%",
               }}
             >
-              <button
-                type="button"
+              <button type="button"
                 onClick={handleMobileToolbarMoreToggle}
                 title={mobileToolbarMoreOpen ? translate("chat.close") : translate("chat.moreControls")}
                 aria-label={mobileToolbarMoreOpen ? translate("chat.close") : translate("chat.moreControls")}
@@ -1867,9 +1872,8 @@ export function AppShell() {
                   }}
                 >
                   {supportedLocales.map((plugin) => (
-                    <button
+                    <button type="button"
                       key={plugin.id}
-                      type="button"
                       onClick={() => {
                         setLocale(plugin.id as typeof locale);
                         setActiveTopPanel(null);
@@ -2007,8 +2011,7 @@ export function AppShell() {
                     const copyButton = (field: SessionCopyField, value: string) => {
                       const copied = copiedSessionField === field;
                       return (
-                        <button
-                          type="button"
+                        <button type="button"
                            title={copied ? translate("session.copied") : translate(field === "file" ? "session.copyFile" : "session.copyId")}
                           onClick={() => handleCopySessionField(field, value)}
                           style={{
@@ -2219,8 +2222,7 @@ export function AppShell() {
               onCloseTab={handleCloseFileTab}
             />
           </div>
-          <button
-            type="button"
+          <button type="button"
             onClick={() => setRightPanelOpen(false)}
             aria-controls="file-panel"
             aria-expanded={rightPanelOpen}
@@ -2275,6 +2277,7 @@ export function AppShell() {
       </div>
     </div>
     {modelsConfigOpen && <ModelsConfig onClose={() => { setModelsConfigOpen(false); setModelsRefreshKey((k) => k + 1); }} />}
+    {settingsConfigOpen && <SettingsConfig onClose={() => setSettingsConfigOpen(false)} />}
     {projectTrustDialogOpen && projectTrustCwd && (
       <ProjectTrustDialog
         cwd={projectTrustCwd}

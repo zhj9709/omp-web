@@ -501,7 +501,7 @@ export const enLocale: LocalePlugin = {
     "i18n.taskFinished": "Task finished.",
     "i18n.attentionNeeded": "Pi needs your attention",
     "i18n.extensionInputNeeded": "An extension is waiting for your input.",
-    "collab.title": "Collab & Share",
+    "collab.title": "Collab",
     "collab.close": "Close",
     "collab.shareTitle": "Share link",
     "collab.shareBody": "Upload an encrypted snapshot of this session. Anyone with the link can read it in their browser.",

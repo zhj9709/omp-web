@@ -501,7 +501,7 @@ export const zhCNLocale: LocalePlugin = {
     "i18n.taskFinished": "任务已完成。",
     "i18n.attentionNeeded": "Pi 需要你的操作",
     "i18n.extensionInputNeeded": "扩展正在等待你的输入。",
-    "collab.title": "协作与分享",
+    "collab.title": "协作",
     "collab.close": "关闭",
     "collab.shareTitle": "分享链接",
     "collab.shareBody": "上传此会话的加密快照。任何持有链接的人都可在浏览器中查看。",

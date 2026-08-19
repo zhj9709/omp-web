@@ -83,9 +83,6 @@ export interface OmpModelRole {
   thinkingLevel?: string;
 }
  
- export interface OmpProviderInfo {
-}
-
 export interface OmpProviderInfo {
   id: string;
   name: string;
@@ -341,6 +338,11 @@ export function readOmpModelsYaml(): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/** Drop the 30s models.yaml cache — called by the config writer after a save. */
+export function invalidateModelsYamlCache(): void {
+  _modelsYamlCache = null;
 }
 
 // ---------------------------------------------------------------------------

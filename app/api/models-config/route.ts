@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { readOmpModelsYaml, getOmpModelList } from "@/lib/omp-models";
+import { ModelsConfigValidationError, writeModelsConfig } from "@/lib/models-config-writer";
 
 export const dynamic = "force-dynamic";
 
@@ -45,15 +46,24 @@ export async function GET() {
 }
 
 /**
- * PUT /api/models-config — writing config is not supported through the web UI.
- * Configure models.yaml directly or use the OMP CLI.
+ * PUT /api/models-config — deep-merge the client's config onto models.yaml.
+ * Credentials and nested blocks the client never sees (apiKey, headers,
+ * discovery, modelOverrides) are preserved from disk; see models-config-writer.
  */
-export async function PUT(_req: Request) {
-  return NextResponse.json(
-    {
-      error: "Writing model configuration is not available through the web UI. Edit models.yaml directly.",
-      feature_unavailable: true,
-    },
-    { status: 501 },
-  );
+export async function PUT(req: Request) {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  try {
+    await writeModelsConfig(body);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    if (error instanceof ModelsConfigValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    return NextResponse.json({ error: String(error) }, { status: 500 });
+  }
 }

@@ -251,31 +251,33 @@ export const SubagentRoster = memo(function SubagentRoster({
 
   return (
     <>
+      {(open || subagents.length > 0) && (
       <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => (open ? close() : setOpen(true))}
-        aria-label="Subagents"
-        title={unavailable ? "Subagents unavailable" : "Subagents"}
+        aria-label="子代理"
+        title={unavailable ? "子代理不可用" : "子代理"}
+        className="toolbar-ghost-btn"
         style={{
           position: "absolute",
-          top: 12,
+          top: 10,
           left: 12,
           zIndex: 45,
           display: "flex",
           alignItems: "center",
           gap: 6,
-          background: open ? "var(--bg-selected)" : "var(--bg-panel)",
-          color: "var(--text)",
-          border: "1px solid var(--border)",
-          borderRadius: 999,
-          padding: "6px 12px",
+          borderRadius: 6,
+          padding: "5px 10px",
           fontSize: 12,
           cursor: "pointer",
-          fontFamily: "var(--font-mono)",
+          background: open ? "var(--bg-hover)" : undefined,
+          color: open ? "var(--text)" : undefined,
         }}
       >
-        <span>agents</span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="5" y="7" width="14" height="12" rx="2" />
+          <path d="M12 7V4" /><circle cx="12" cy="3" r="1" />
+          <line x1="9" y1="12" x2="9" y2="12.01" /><line x1="15" y1="12" x2="15" y2="12.01" />
+        </svg>
+        <span>子代理</span>
         {activeCount > 0 && (
           <span
             style={{
@@ -296,6 +298,7 @@ export const SubagentRoster = memo(function SubagentRoster({
           </span>
         )}
       </button>
+      )}
 
       {open && (
         <div
@@ -339,7 +342,7 @@ export const SubagentRoster = memo(function SubagentRoster({
                 }}
               >
                 <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>
-                  Subagents
+                  子代理
                 </span>
                 <button
                   type="button"
@@ -353,7 +356,7 @@ export const SubagentRoster = memo(function SubagentRoster({
                     padding: "2px 6px",
                   }}
                 >
-                  refresh
+                  刷新
                 </button>
               </div>
               <div
@@ -369,14 +372,14 @@ export const SubagentRoster = memo(function SubagentRoster({
               >
                 {loadingTranscript && (
                   <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "8px 10px" }}>
-                    Loading…
+                    加载中…
                   </div>
                 )}
                 {subagents.length === 0 ? (
                   <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "8px 10px" }}>
                     {unavailable
-                      ? "Subagent monitoring is unavailable."
-                      : "No subagents yet. Subagents spawned by the task tool appear here."}
+                      ? "子代理监控不可用。"
+                      : "暂无子代理。task 工具启动的子代理会显示在这里。"}
                   </div>
                 ) : (
                   subagents.map((info) => (

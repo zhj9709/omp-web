@@ -66,6 +66,10 @@ export interface AssistantMessage {
   stopReason?: string;
   errorMessage?: string;
   timestamp?: number;
+  /** Generation wall-clock time in ms (OMP writes it on completed turns). */
+  duration?: number;
+  /** Time to first token in ms. */
+  ttft?: number;
   usage?: {
     input: number;
     output: number;

@@ -41,12 +41,12 @@ The following has been verified end-to-end on this checkout:
 | Plugin management | Partial | `omp plugin list --json` + `omp plugin install/remove/enable/disable`; `update` is `feature_unavailable` |
 | Skills | Available (read-only) | Filesystem discovery of `managed-skills` |
 | Auth (API key / OAuth login / logout) | Unavailable | HTTP 501 `feature_unavailable` |
-| Model config write | Unavailable | HTTP 501 — edit `models.yaml` directly |
+| Model config write | Available | Deep-merge onto `models.yaml` — unseen credentials/`discovery`/`modelOverrides` preserved, backup + atomic write |
 | Model test | Unavailable | HTTP 501 — use the OMP CLI |
 | Model discovery | Partial | Fetches upstream model list; API key from request body or `models.yaml` (server-side only) |
-| Session rename / delete | Unavailable | HTTP 501 `feature_unavailable` |
+| Session rename / delete | Available | Rename via RPC `set_session_name` (live) or header rewrite (on disk); delete stops the live run and cascade-reparents children |
 | Session auto-name | Available | Generates a title from the first user message via the OMP-configured model; falls back to the message prefix on failure |
-| Session HTML export | Unavailable | HTTP 501 `feature_unavailable` |
+| Session HTML export | Available | Renders through OMP RPC `export_html` and downloads the file |
 | Project trust | Unavailable | OMP v17.3.5 has no trust system; GET returns fixed "not applicable" |
 | Tool filtering (`toolNames`) | Unavailable | `capability_unavailable` (`tool_filtering`) |
 | Fork at a specific entry | Unavailable | `capability_unavailable` (`fork_at_entry`) |
@@ -73,8 +73,7 @@ npm run dev    # port 30142
 - `fork` with an `entryId` returns `capability_unavailable` (`fork_at_entry`); OMP RPC
   `new_session` forks the whole transcript and has no per-entry truncation.
 - Auth write endpoints (API key, OAuth login/logout) return HTTP 501 `feature_unavailable`.
-- Session rename/delete/export return HTTP 501 `feature_unavailable`.
-- Model config write and model test return HTTP 501 `feature_unavailable`.
+- Model connectivity test returns HTTP 501 `feature_unavailable`.
 - The app version shown may be `0.0.0` when `NEXT_PUBLIC_APP_VERSION` is unset.
 
 ## Environment Variables
