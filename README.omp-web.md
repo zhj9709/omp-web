@@ -47,6 +47,10 @@ The following has been verified end-to-end on this checkout:
 | Session rename / delete | Available | Rename via RPC `set_session_name` (live) or header rewrite (on disk); delete stops the live run and cascade-reparents children |
 | Session auto-name | Available | Generates a title from the first user message via the OMP-configured model; falls back to the message prefix on failure |
 | Session HTML export | Available | Renders through OMP RPC `export_html` and downloads the file |
+| Settings editor | Available | Full config.yml editor (`/api/config` deep-merge, credentials redacted) |
+| Memory browser | Available (read-only) | Per-project mnemopi banks under `~/.omp/agent/memories/` |
+| Usage dashboard | Available | Aggregates token/cost from session jsonl files (`/api/usage`) |
+| Command palette | Available | Cmd/Ctrl+K — actions, session jump, fuzzy file search |
 | Project trust | Unavailable | OMP v17.3.5 has no trust system; GET returns fixed "not applicable" |
 | Tool filtering (`toolNames`) | Unavailable | `capability_unavailable` (`tool_filtering`) |
 | Fork at a specific entry | Unavailable | `capability_unavailable` (`fork_at_entry`) |

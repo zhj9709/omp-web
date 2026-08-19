@@ -93,6 +93,7 @@ app/api/
   git/diff/route.ts                        GET git diff for a file
   git/status/route.ts                      GET git status for a cwd
   home/route.ts                            GET user home directory
+  memory/route.ts                          GET aggregated memories (per-project mnemopi banks, read-only)
   models/route.ts                          GET models (models.db + config.yml + models.yaml, sanitized)
   models-config/route.ts                   GET read config | PUT deep-merge write (keys preserved)
   models-config/catalog/route.ts           GET models.dev pricing presets
@@ -106,6 +107,7 @@ app/api/
   sessions/[id]/context/route.ts           GET ?leafId= — context for a specific leaf
   sessions/[id]/entries/[entryId]/thinking/route.ts  GET a thinking block
   sessions/[id]/export/route.ts            GET export session transcript as HTML download
+  usage/route.ts                           GET usage/cost aggregates from session jsonl files (60s cache)
   sessions/[id]/state/route.ts             GET running state
   skills/route.ts                          GET/PATCH loaded skills
   skills/check/route.ts                    POST check a skill for updates
@@ -168,6 +170,11 @@ must stay honest in the UI — they are not implemented in OMP RPC mode:
 `components/`:
 ```
   AppShell.tsx        layout + URL state + tab management
+  TopBar.tsx          top bar (theme/language/palette trigger/running center/session stats/panels)
+  CommandPalette.tsx  Cmd/Ctrl+K launcher: actions + session jump + fuzzy file search
+  MemoryPanel.tsx     memory browser modal (per-project banks, read-only)
+  UsagePanel.tsx      usage/cost dashboard modal (30-day chart + per-model ranking)
+  RunningCenter.tsx   running-tasks indicator + dropdown (polls /api/agent/running)
   SessionSidebar.tsx  session tree + FileExplorer
   ChatWindow.tsx      chat composition + completion sound wrapper
   ChatInput.tsx       input bar + model/thinking/tools/compact controls
