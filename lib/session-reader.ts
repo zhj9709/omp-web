@@ -514,6 +514,11 @@ function normalizeEntry(raw: Record<string, unknown>): SessionEntry | null {
       return { ...base, type: "session_info",
         name: typeof raw.name === "string" ? raw.name : undefined } as SessionEntry;
     }
+    case "mode_change": {
+      return { ...base, type: "mode_change",
+        mode: typeof raw.mode === "string" ? raw.mode : "",
+        data: raw.data as Record<string, unknown> | undefined } as SessionEntry;
+    }
     case "session":
     case "title":
       return null;

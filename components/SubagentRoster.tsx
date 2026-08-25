@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   subagentIsActive,
   spawnSummary,
@@ -10,6 +10,7 @@ import {
   type SubagentTranscriptMessage,
 } from "@/lib/subagents";
 import { useI18n } from "@/hooks/useI18n";
+import { formatDuration } from "@/lib/session-timing";
 
 const STATUS_COLORS: Record<string, string> = {
   active: "var(--accent)",
@@ -29,6 +30,39 @@ const STATUS_COLORS: Record<string, string> = {
 
 function statusColor(status: string): string {
   return STATUS_COLORS[status] ?? STATUS_COLORS.unknown;
+}
+
+/** Terminal subagent statuses (lifecycle frames use "started" for live). */
+const SUBAGENT_TERMINAL_STATUSES: Record<string, true> = {
+  completed: true, done: true, succeeded: true, failed: true, error: true, aborted: true,
+};
+
+/**
+ * Indentation depth per subagent from the `parentToolCallId` chain (OMP
+ * snapshots expose it, mirroring the DSH subagent monitor's tree layout).
+ * Cycles and missing parents are treated as depth 0.
+ */
+function buildSubagentDepth(roster: SubagentInfo[]): Map<string, number> {
+  const parentById = new Map<string, string>();
+  for (const info of roster) {
+    const parent = typeof info.raw.parentToolCallId === "string"
+      ? info.raw.parentToolCallId
+      : undefined;
+    if (parent) parentById.set(info.id, parent);
+  }
+  const depth = new Map<string, number>();
+  const visited = new Set<string>();
+  const compute = (id: string): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (visited.has(id)) return 0;
+    visited.add(id);
+    const parent = parentById.get(id);
+    const value = parent ? compute(parent) + 1 : 0;
+    depth.set(id, value);
+    return value;
+  };
+  for (const info of roster) compute(info.id);
+  return depth;
 }
 
 function transcriptText(message: SubagentTranscriptMessage): string {
@@ -218,6 +252,17 @@ export const SubagentRoster = memo(function SubagentRoster({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
 
+  // Tick once per second while any subagent is live so elapsed times on the
+  // cards stay live (the DSH monitor shows a breathing running timer).
+  const [now, setNow] = useState(() => Date.now());
+  const hasRunning = subagents.some((s) => !SUBAGENT_TERMINAL_STATUSES[s.status]);
+  useEffect(() => {
+    if (!hasRunning || !open) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasRunning, open]);
+  const subagentDepth = useMemo(() => buildSubagentDepth(subagents), [subagents]);
+
   const setOpen = useCallback((next: boolean) => {
     setOpenState(next);
     try {
@@ -275,6 +320,9 @@ export const SubagentRoster = memo(function SubagentRoster({
   }, [open, close]);
 
   // Auto-hide when the user clicks outside the toggle button or the panel.
+  // Note: clicking the chat composer (send button) intentionally keeps the
+  // panel open — users watch the live roster while spawning subagents
+  // (mirrors the DSH floating monitor). Esc and the toggle button still close.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
@@ -282,6 +330,10 @@ export const SubagentRoster = memo(function SubagentRoster({
       if (!target) return;
       if (buttonRef.current?.contains(target)) return;
       if (panelRef.current?.contains(target)) return;
+      // Keep the panel open for composer interactions so a task submission
+      // does not dismiss the monitor mid-spawn.
+      const el = target instanceof Element ? target : null;
+      if (el?.closest?.("textarea, [contenteditable], [data-chat-composer]")) return;
       close();
     };
     document.addEventListener("mousedown", onPointerDown);
@@ -444,7 +496,13 @@ export const SubagentRoster = memo(function SubagentRoster({
                   </div>
                 ) : (
                   <>
-                  {subagents.map((info) => (
+                  {subagents.map((info) => {
+                    const depth = subagentDepth.get(info.id) ?? 0;
+                    const isRunning = !SUBAGENT_TERMINAL_STATUSES[info.status];
+                    const elapsedMs = isRunning
+                      ? (info.startedAt ? now - info.startedAt : 0)
+                      : (info.startedAt && info.endedAt ? info.endedAt - info.startedAt : 0);
+                    return (
                     <button
                       key={info.id}
                       type="button"
@@ -458,7 +516,7 @@ export const SubagentRoster = memo(function SubagentRoster({
                         background: "none",
                         border: "none",
                         borderRadius: 8,
-                        padding: "8px 10px",
+                        padding: `8px 10px 8px ${10 + depth * 14}px`,
                         cursor: "pointer",
                         color: "var(--text)",
                       }}
@@ -476,6 +534,7 @@ export const SubagentRoster = memo(function SubagentRoster({
                           borderRadius: 999,
                           background: statusColor(info.status),
                           flexShrink: 0,
+                          ...(isRunning ? { animation: "pulse 1.4s ease-in-out infinite" } : {}),
                         }}
                       />
                       <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
@@ -508,6 +567,17 @@ export const SubagentRoster = memo(function SubagentRoster({
                             {info.progress.text}
                           </span>
                         )}
+                        {elapsedMs > 0 && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              color: "var(--text-dim)",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {isRunning ? "⏱ " : ""}{formatDuration(elapsedMs)}
+                          </span>
+                        )}
                       </span>
                       <span
                         style={{
@@ -521,7 +591,8 @@ export const SubagentRoster = memo(function SubagentRoster({
                         {info.status}
                       </span>
                     </button>
-                  ))}
+                    );
+                  })}
                   {historicalSpawns.length > 0 && (
                     <>
                       <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-dim)", padding: "8px 10px 2px" }}>

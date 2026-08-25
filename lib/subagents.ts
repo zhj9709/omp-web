@@ -18,6 +18,10 @@ export interface SubagentInfo {
   model: string | null;
   provider: string | null;
   progress: SubagentProgress | null;
+  /** First wall-clock time the runtime observed this subagent running (client-tracked). */
+  startedAt?: number;
+  /** Wall-clock time the runtime observed a terminal status (client-tracked). */
+  endedAt?: number;
   raw: Record<string, unknown>;
 }
 
@@ -134,7 +138,12 @@ function compareSubagents(a: SubagentInfo, b: SubagentInfo): number {
   return a.id.localeCompare(b.id);
 }
 
-/** Upsert a normalized subagent into the roster, preserving sort by index/id. */
+/**
+ * Upsert a normalized subagent into the roster, preserving sort by index/id.
+ * Frames are merged instead of replaced: a bare `subagent_event` frame (id
+ * only, status "unknown") must not clobber the label/status a lifecycle or
+ * progress frame already established.
+ */
 export function upsertSubagent(
   roster: SubagentInfo[],
   incoming: SubagentInfo,
@@ -144,7 +153,15 @@ export function upsertSubagent(
   if (existingIndex === -1) {
     next.push(incoming);
   } else {
-    next[existingIndex] = incoming;
+    const existing = next[existingIndex];
+    const merged: SubagentInfo = { ...existing, ...incoming };
+    if (incoming.status === "unknown" && existing.status !== "unknown") {
+      merged.status = existing.status;
+    }
+    if (!incoming.label || incoming.label === "Subagent") {
+      merged.label = existing.label;
+    }
+    next[existingIndex] = merged;
   }
   return next.sort(compareSubagents);
 }
@@ -179,6 +196,7 @@ export function mergeSubagentSnapshot(
 export function subagentIsActive(info: SubagentInfo): boolean {
   return (
     info.status === "active" ||
+    info.status === "started" ||
     info.status === "running" ||
     info.status === "working" ||
     info.status === "in_progress"

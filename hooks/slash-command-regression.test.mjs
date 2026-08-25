@@ -11,13 +11,14 @@ const jiti = createJiti(import.meta.url, {
 });
 const { buildSlashCommandLayout } = await jiti.import("../components/ChatInput.tsx");
 
-test("unmapped slash commands return an explicit error instead of falling through to a prompt", () => {
+test("unknown slash commands return an explicit error instead of falling through to a prompt", () => {
   const fnStart = sessionSource.indexOf("handleBuiltinSlashCommand");
   const defaultSource = sessionSource.slice(fnStart);
   assert.match(defaultSource, /default:/);
-  assert.match(defaultSource, /commandName\.startsWith\("skill:"\)/);
+  assert.match(defaultSource, /OMP_EXECUTABLE_SLASH_COMMANDS\[commandName\]/);
+  assert.match(defaultSource, /TUI_ONLY_SLASH_COMMANDS\[commandName\]/);
   assert.match(defaultSource, /return \{ handled: false \}/);
-  assert.match(defaultSource, /handled: true, error:/);
+  assert.match(defaultSource, /handled: true, error: `Unknown command/);
 });
 
 test("/model maps to get_state without args and set_model with a provider/model pair", () => {
@@ -25,25 +26,41 @@ test("/model maps to get_state without args and set_model with a provider/model 
   const modelSource = sessionSource.slice(fnStart);
   assert.match(modelSource, /case "model"/);
   assert.match(modelSource, /type: "get_state"/);
-  assert.match(modelSource, /type: "set_model"/);
+  assert.match(modelSource, /type: "set_model", provider, modelId/);
 });
 
-test("/reload performs a pure client-side reload without an RPC call", () => {
-  const reloadSource = sessionSource.slice(
-    sessionSource.indexOf('case "reload"'),
-    sessionSource.indexOf('case "name"'),
+test("TUI-renamed commands are forwarded to OMP instead of local RPC calls", () => {
+  const slashSource = sessionSource.slice(
+    sessionSource.indexOf("const handleBuiltinSlashCommand = useCallback"),
+    sessionSource.indexOf("// Let AgentSession.prompt decide"),
   );
-  assert.doesNotMatch(reloadSource, /sendAgentCommand/);
-  assert.match(reloadSource, /loadSession\(sid, false, true\)/);
-  assert.match(reloadSource, /loadTools\(sid\)/);
-  assert.match(reloadSource, /loadSlashCommands\(\)/);
-  assert.match(reloadSource, /loadModels\(\)/);
+  // /reload and /name no longer exist; /rename and /reload-plugins are
+  // forwarded through the OMP-executable list.
+  assert.doesNotMatch(slashSource, /case "reload":/);
+  assert.doesNotMatch(slashSource, /case "name":/);
+  assert.match(sessionSource, /rename: true/);
+  assert.match(sessionSource, /"reload-plugins": true/);
+  assert.match(slashSource, /type: "prompt", message: text, streamingBehavior: "steer"/);
 });
 
-test("SlashCommandInfo.source accepts builtin, custom, and file origins", () => {
+test("TUI-only commands and settings/new/quit/resume are handled locally", () => {
+  const slashSource = sessionSource.slice(
+    sessionSource.indexOf("const handleBuiltinSlashCommand = useCallback"),
+    sessionSource.indexOf("// Let AgentSession.prompt decide"),
+  );
+  assert.match(slashSource, /case "settings"/);
+  assert.match(slashSource, /opts\.onOpenSettings\?\.\(\)/);
+  assert.match(slashSource, /case "new"/);
+  assert.match(slashSource, /opts\.onOpenNewSession\?\.\(cwd\)/);
+  assert.match(slashSource, /case "quit"/);
+  assert.match(slashSource, /case "resume"/);
+  assert.match(slashSource, /is a TUI-only command/);
+});
+
+test("SlashCommandInfo.source accepts builtin, custom, file, and mcp_prompt origins", () => {
   assert.match(
     sessionSource,
-    /source:\s*"extension"\s*\|\s*"prompt"\s*\|\s*"skill"\s*\|\s*"builtin"\s*\|\s*"custom"\s*\|\s*"file"/,
+    /source:\s*"extension"\s*\|\s*"prompt"\s*\|\s*"skill"\s*\|\s*"builtin"\s*\|\s*"custom"\s*\|\s*"file"\s*\|\s*"mcp_prompt"/,
   );
 });
 

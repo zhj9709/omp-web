@@ -35,9 +35,11 @@ const dialogStyle: React.CSSProperties = {
   maxWidth: "100%",
   maxHeight: "min(80vh, 640px)",
   overflow: "auto",
-  border: "1px solid var(--border)",
+  border: "1px solid var(--border-subtle)",
   borderRadius: "var(--radius-lg)",
-  background: "var(--bg-panel)",
+  background: "color-mix(in srgb, var(--bg-floating) 88%, transparent)",
+  backdropFilter: "blur(16px) saturate(1.15)",
+  WebkitBackdropFilter: "blur(16px) saturate(1.15)",
   boxShadow: "var(--shadow-modal)",
 };
 

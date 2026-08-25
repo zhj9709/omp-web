@@ -271,6 +271,9 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     if ((message as CustomMessage).customType === "compaction") {
       return <CompactionMessageView message={message as CustomMessage} />;
     }
+    if ((message as CustomMessage).customType === "commandOutput") {
+      return <CommandOutputMessageView message={message as CustomMessage} />;
+    }
     return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
   }
   if (message.role === "bashExecution") {
@@ -1513,6 +1516,56 @@ function CompactionMessageView({ message }: { message: CustomMessage }) {
           )}
           <CompactionFileMetadata readFiles={parsedSummary.readFiles} modifiedFiles={parsedSummary.modifiedFiles} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function CommandOutputMessageView({ message }: { message: CustomMessage }) {
+  const { t } = useI18n();
+  const text = getMessageText(message.content);
+  const time = formatTime(message.timestamp);
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div
+        style={{
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          overflow: "hidden",
+          background: "var(--bg)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "7px 10px",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--bg-panel)",
+            color: "var(--text-muted)",
+          }}
+        >
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 650 }}>
+            {t("chat.commandOutput")}
+          </span>
+          {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{time}</span>}
+        </div>
+        <pre
+          style={{
+            margin: 0,
+            padding: "11px 13px 12px",
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            lineHeight: 1.55,
+            color: "var(--text)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {text}
+        </pre>
       </div>
     </div>
   );

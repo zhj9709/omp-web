@@ -401,6 +401,17 @@ export class OmpSessionWrapper {
         return null;
       }
 
+      case "cycle_model": {
+        const raw = await this.client.sendCommand<Record<string, unknown>>({
+          type: "cycle_model",
+        });
+        const model = (raw as { model?: { provider: string; id: string } })?.model;
+        if (model) {
+          this._model = { provider: model.provider, id: model.id };
+        }
+        return model ? { id: model.id, provider: model.provider } : null;
+      }
+
       // --- compaction ---
       case "compact": {
         try {

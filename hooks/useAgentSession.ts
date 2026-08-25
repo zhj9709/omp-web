@@ -32,6 +32,8 @@ import {
   type SubagentInfo,
   type SubagentTranscript,
 } from "@/lib/subagents";
+import { normalizeGoalEvent, type GoalModeInfo } from "@/lib/goal";
+import { mergeTuiOnlyCommands } from "@/lib/slash-command-catalog";
 import { userMessageKey } from "@/lib/prompt-recovery";
 import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
@@ -140,7 +142,7 @@ export interface CompactResultInfo {
 export interface SlashCommandInfo {
   name: string;
   description?: string;
-  source: "extension" | "prompt" | "skill" | "builtin" | "custom" | "file";
+  source: "extension" | "prompt" | "skill" | "builtin" | "custom" | "file" | "mcp_prompt";
   sourceInfo?: {
     path: string;
     source: string;
@@ -149,6 +151,46 @@ export interface SlashCommandInfo {
     baseDir?: string;
   };
 }
+
+/**
+ * Builtin slash commands that OMP executes natively in text/RPC mode (they
+ * carry a text-mode `handle` in the OMP slash-command registry). Forwarding
+ * these as prompts lets OMP intercept them (agentInvoked: false) and stream
+ * output back via command_output events — the same behavior as the TUI.
+ * Mirrors omp-src packages/coding-agent/src/slash-commands/*.ts.
+ */
+const OMP_EXECUTABLE_SLASH_COMMANDS: Record<string, true> = {
+  // modes
+  security: true, model: true, models: true, fast: true, computer: true, vision: true, prewalk: true,
+  // collaboration
+  advisor: true, export: true, dump: true, share: true, browser: true,
+  // session
+  todo: true, jobs: true, usage: true, stats: true, changelog: true, tools: true, context: true, mcp: true,
+  // lifecycle
+  ssh: true, fresh: true, shake: true, memory: true, rename: true, move: true, "add-dir": true, "remove-dir": true, dirs: true,
+  // marketplace
+  marketplace: true, plugins: true, "reload-plugins": true,
+  // control
+  force: true, "force:": true,
+};
+
+/**
+ * Builtin slash commands with no text-mode handler (TUI-only). These cannot
+ * run through OMP RPC; surface an explicit message instead of forwarding them
+ * as prompts (which would reach the agent as ordinary text).
+ */
+const TUI_ONLY_SLASH_COMMANDS: Record<string, true> = {
+  plan: true, "plan-review": true, vibe: true, goal: true,
+  "guided-goal": true, loop: true, queue: true, join: true, leave: true,
+  hotkeys: true, agents: true, branch: true, fork: true, tree: true,
+  login: true, logout: true, clear: true, drop: true, resume: true, btw: true,
+  tan: true, omfg: true, retry: true, debug: true, exit: true, live: true, pause: true,
+};
+
+/** Terminal subagent statuses (lifecycle frames use "started" for live). */
+const SUBAGENT_TERMINAL_STATUSES: Record<string, true> = {
+  completed: true, done: true, succeeded: true, failed: true, error: true, aborted: true,
+};
 
 export type BuiltinSlashCommandResult =
   | { handled: false }
@@ -171,6 +213,14 @@ export interface UseAgentSessionOptions {
   onSystemPromptLoaderChange?: (loader: (() => Promise<void>) | null) => void;
   onSessionStatsPanelOpen?: () => void;
   setToolPreset?: (preset: ToolPreset) => void;
+  /** Opens the settings panel (maps the TUI-only /settings command). */
+  onOpenSettings?: () => void;
+  /** Starts a new session in the given working directory (maps TUI /new). */
+  onOpenNewSession?: (cwd: string) => void;
+  /** Opens the plugins panel (maps TUI /extensions). */
+  onOpenPlugins?: () => void;
+  /** Opens the collaboration panel (maps TUI /collab). */
+  onOpenCollab?: () => void;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -376,6 +426,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [todoPhases, setTodoPhases] = useState<TodoPhase[]>([]);
   const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
   const [subagentsUnavailable, setSubagentsUnavailable] = useState(false);
+  const [goal, setGoal] = useState<GoalModeInfo | null>(null);
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
@@ -501,6 +552,27 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   // --- rAF-coalesced subagent roster updates --------------------------------
+  // OMP snapshots carry only `lastUpdate`; track the first observed running
+  // time and the terminal time here so the roster can show real elapsed
+  // durations (mirroring the DSH subagent monitor).
+  const subagentStartedAtRef = useRef<Map<string, number>>(new Map());
+  const subagentEndedAtRef = useRef<Map<string, number>>(new Map());
+  // OMP lifecycle frames use "started" for a running subagent; completed/
+  // failed/aborted are terminal. Anything else (running/working/in_progress/
+  // active) is also live.
+  const trackSubagentTimings = useCallback((roster: SubagentInfo[]): SubagentInfo[] => {
+    const started = subagentStartedAtRef.current;
+    const ended = subagentEndedAtRef.current;
+    return roster.map((info) => {
+      if (!SUBAGENT_TERMINAL_STATUSES[info.status]) {
+        if (!started.has(info.id)) started.set(info.id, Date.now());
+        return { ...info, startedAt: started.get(info.id) };
+      }
+      if (!ended.has(info.id)) ended.set(info.id, Date.now());
+      return { ...info, startedAt: started.get(info.id), endedAt: ended.get(info.id) };
+    });
+  }, []);
+
   const queueSubagentEvent = useCallback((info: SubagentInfo) => {
     pendingSubagentEventsRef.current.push(info);
     if (subagentFrameRef.current !== null) return;
@@ -512,10 +584,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setSubagents((prev) => {
         let next = prev;
         for (const ev of events) next = upsertSubagent(next, ev);
-        return next;
+        return trackSubagentTimings(next);
       });
     });
-  }, []);
+  }, [trackSubagentTimings]);
 
 
   sessionPropIdRef.current = session?.id ?? null;
@@ -541,6 +613,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       },
     });
   }
+
+  // Load persisted goal-mode state when the session changes; live updates
+  // arrive via goal_updated events.
+  useEffect(() => {
+    const sid = session?.id ?? sessionIdRef.current;
+    if (!sid) return;
+    let cancelled = false;
+    fetch(`/api/sessions/${encodeURIComponent(sid)}/goal`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() as Promise<{ goal?: GoalModeInfo | null }> : null))
+      .then((d) => {
+        if (!cancelled && sessionIdRef.current === sid) setGoal(d?.goal ?? null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [session?.id]);
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
@@ -885,7 +972,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setSlashCommandsLoading(true);
     try {
       const data = await sendAgentCommand<SlashCommandsResponse>(sid, { type: "get_commands" });
-      const commands = data?.commands ?? [];
+      const commands = mergeTuiOnlyCommands(data?.commands ?? []);
       setSlashCommands(commands);
       return commands;
     } catch (e) {
@@ -1295,11 +1382,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         type: "get_subagents",
       });
       if (sessionIdRef.current !== sid) return;
-      setSubagents((prev) => mergeSubagentSnapshot(prev, snapshot));
+      setSubagents((prev) => trackSubagentTimings(mergeSubagentSnapshot(prev, snapshot)));
     } catch {
       // Best-effort refresh; lifecycle events keep the roster current anyway.
     }
-  }, []);
+  }, [trackSubagentTimings]);
 
   const loadSubagentTranscript = useCallback(
     async (subagentId: string): Promise<SubagentTranscript | null> => {
@@ -1423,6 +1510,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           message: (event.error as string | undefined) ?? "Extension command failed",
         });
         break;
+      case "command_output": {
+        // OMP executed a slash command natively (agentInvoked: false) and
+        // streams its terminal output here — e.g. /todo list, /usage show,
+        // /dump. Render it as a command-output message so the user sees what
+        // the command actually did, matching the TUI.
+        const text = (event.text as string | undefined) ?? "";
+        if (!text.trim()) break;
+        setMessages((prev) => [...prev, {
+          role: "custom",
+          customType: "commandOutput",
+          content: [{ type: "text", text }],
+          display: true,
+          timestamp: Date.now(),
+        }]);
+        if (isNearBottomRef.current) scrollToBottom("auto");
+        break;
+      }
       case "message_start":
       case "message_update": {
         // Ignore streaming events arriving after this run already finished
@@ -1502,6 +1606,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             }
             return [...prev, delivered];
           });
+          // Queue deliveries arrive mid-run; keep the viewport pinned to the
+          // latest message when the user is already at the bottom.
+          if (isNearBottomRef.current) scrollToBottom("auto");
         } else if (completed) {
           // TTSR aborts the current assistant message mid-stream and immediately
           // retries with a rule reminder. The runtime discards the aborted partial
@@ -1646,6 +1753,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "subagent_event": {
         const info = normalizeSubagentEvent(event);
         if (info) queueSubagentEvent(info);
+        break;
+      }
+      case "goal_updated": {
+        const goalInfo = normalizeGoalEvent(event as { goal?: unknown; state?: unknown });
+        if (goalInfo) setGoal(goalInfo);
         break;
       }
 
@@ -2015,25 +2127,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return complete({ handled: true, message: "Compacted context" });
         }
 
-        case "reload": {
-          if (!sid) return complete({ handled: true, error: "No active session to reload" });
-          await Promise.all([
-            loadSession(sid, false, true),
-            loadTools(sid),
-            loadSlashCommands(),
-            loadModels(),
-          ]);
-          return complete({ handled: true, message: "Reloaded session resources" });
-        }
-
-        case "name": {
-          if (!sid) return complete({ handled: true, error: "No active session to name" });
-          if (!args) return complete({ handled: true, error: "Usage: /name <name>" });
-          await sendAgentCommand(sid, { type: "set_session_name", name: args });
-          if (await loadSession(sid)) promoteNewSession();
-          return complete({ handled: true, message: `Session renamed to ${args}` });
-        }
-
         case "session": {
           if (!sid) return complete({ handled: true, error: "No active session" });
           const stats = await sendAgentCommand<SessionStatsInfo>(sid, { type: "get_session_stats" });
@@ -2072,11 +2165,82 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return complete({ handled: true, message: `Model set to ${provider}/${modelId}` });
         }
 
+        case "settings":
+        case "setup":
+        case "providers": {
+          opts.onOpenSettings?.();
+          return complete({ handled: true, message: "Opened settings" });
+        }
+
+        case "new": {
+          const cwd = session?.cwd ?? newSessionCwd;
+          if (!cwd) return complete({ handled: true, error: "No working directory for a new session" });
+          opts.onOpenNewSession?.(cwd);
+          return complete({ handled: true, message: "Started a new session" });
+        }
+
+        case "switch": {
+          if (!sid) return complete({ handled: true, error: "No active session" });
+          const model = await sendAgentCommand<{ id?: string; provider?: string }>(sid, { type: "cycle_model" });
+          if (model?.id && model.provider) {
+            await loadSession(sid, true);
+            return complete({ handled: true, message: `Switched model to ${model.provider}/${model.id}` });
+          }
+          return complete({ handled: true, error: "No next model available" });
+        }
+
+        case "extensions":
+        case "status": {
+          opts.onOpenPlugins?.();
+          return complete({ handled: true, message: "Opened extensions" });
+        }
+
+        case "collab": {
+          opts.onOpenCollab?.();
+          return complete({ handled: true, message: "Opened collaboration" });
+        }
+
+        case "handoff": {
+          if (!sid) return complete({ handled: true, error: "No active session" });
+          await handleHandoff();
+          return complete({ handled: true, message: "Handing off the session" });
+        }
+
+        case "quit":
+        case "q": {
+          return complete({ handled: true, message: "Close this browser tab to quit; the session keeps running server-side" });
+        }
+
+        case "resume": {
+          return complete({ handled: true, message: "Pick a session from the sidebar to resume it" });
+        }
+
         default: {
-          // OMP RPC intercepts registered slash commands (agentInvoked: false)
-          // and discards their output; only skill:* commands actually reach the
-          // agent. Surface an explicit error instead of silently forwarding.
-          if (commandName.startsWith("skill:")) return { handled: false };
+          // OMP intercepts registered slash commands in text mode (agentInvoked:
+          // false) and streams their terminal output via command_output events —
+          // the same behavior as the TUI. Forward natively-executable builtins
+          // directly (no user message is recorded, matching the TUI). Keep the
+          // agent event stream open so command_output reaches the UI; the idle
+          // grace closes it once OMP reports the prompt no longer running.
+          if (OMP_EXECUTABLE_SLASH_COMMANDS[commandName]) {
+            if (!sid) return complete({ handled: true, error: "No active session for the command" });
+            cancelEventStreamGrace();
+            agentRunningRef.current = true;
+            await ensureEventsConnected(sid);
+            await sendAgentCommand(sid, { type: "prompt", message: text, streamingBehavior: "steer" });
+            agentRunningRef.current = false;
+            scheduleEventStreamClose(sid);
+            return { handled: true };
+          }
+          if (TUI_ONLY_SLASH_COMMANDS[commandName]) {
+            return complete({ handled: true, error: `/${commandName} is a TUI-only command — use the web UI instead` });
+          }
+          // Non-builtin commands (skill/extension/custom/file/mcp_prompt) go
+          // through the normal prompt path: OMP expands/executes them and the
+          // agent (or extension) produces visible messages.
+          if (slashCommands.some((c) => c.name === commandName && c.source !== "builtin")) {
+            return { handled: false };
+          }
           return complete({ handled: true, error: `Unknown command: /${commandName}` });
         }
       }
@@ -2085,7 +2249,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [addNotice, ensureNewSession, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionStatsPanelOpen]);
+  }, [addNotice, cancelEventStreamGrace, ensureEventsConnected, ensureNewSession, handleHandoff, isCompacting, loadSession, promoteNewSession, onSessionStatsPanelOpen, opts.onOpenCollab, opts.onOpenNewSession, opts.onOpenPlugins, opts.onOpenSettings, scheduleEventStreamClose, session?.cwd, newSessionCwd, slashCommands]);
 
   // Let AgentSession.prompt decide atomically whether to queue against the
   // current run or start a new turn if it settled while the request was in
@@ -2435,7 +2599,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } else if (!initialScrollDoneRef.current) {
         initialScrollDoneRef.current = true;
         scrollToBottom("instant");
-      } else if (!agentRunningRef.current && isNearBottomRef.current) {
+      } else if (isNearBottomRef.current) {
+        // Follow new messages while the agent is running too: the tail-tracking
+        // ref already encodes "user is at the bottom", so appends (queue
+        // deliveries, message_end, reloads) keep the viewport pinned to the
+        // latest message instead of stranding it mid-conversation.
         scrollToBottom("auto");
       }
     }
@@ -2486,6 +2654,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isCompacting, compactError, compactResult, isHandingOff, handoffError, currentModel, displayModel, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, todoPhases, setTodos,
     subagents, subagentsUnavailable, refreshSubagents, loadSubagentTranscript,
+    goal,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,

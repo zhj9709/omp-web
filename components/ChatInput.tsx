@@ -169,23 +169,11 @@ function formatTokenCount(tokens: number): string {
   return tokens.toLocaleString();
 }
 
-type SlashCommandPaletteItem = SlashCommandInfo | {
-  name: string;
-  description: string;
-  source: "builtin";
-};
+type SlashCommandPaletteItem = SlashCommandInfo;
 
-type SlashCommandSource = SlashCommandPaletteItem["source"];
+type SlashCommandSource = SlashCommandInfo["source"];
 
-const BUILTIN_SLASH_COMMANDS: SlashCommandPaletteItem[] = [
-  { name: "compact", description: "chat.commandCompact", source: "builtin" },
-  { name: "reload", description: "chat.commandReload", source: "builtin" },
-  { name: "name", description: "chat.commandName", source: "builtin" },
-  { name: "session", description: "chat.commandSession", source: "builtin" },
-  { name: "copy", description: "chat.commandCopy", source: "builtin" },
-];
-
-const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "extension", "prompt", "skill", "custom", "file"];
+const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "extension", "prompt", "skill", "custom", "file", "mcp_prompt"];
 
 const SLASH_SOURCE_GROUP_LABEL_KEYS: Record<SlashCommandSource, string> = {
   builtin: "chat.builtIn",
@@ -194,6 +182,7 @@ const SLASH_SOURCE_GROUP_LABEL_KEYS: Record<SlashCommandSource, string> = {
   skill: "chat.skills",
   custom: "chat.custom",
   file: "chat.file",
+  mcp_prompt: "chat.mcpPrompts",
 };
 
 const SLASH_SOURCE_ORDER: Record<SlashCommandSource, number> = {
@@ -203,20 +192,17 @@ const SLASH_SOURCE_ORDER: Record<SlashCommandSource, number> = {
   skill: 3,
   custom: 4,
   file: 5,
+  mcp_prompt: 6,
 };
 
-function slashMatchRank(command: SlashCommandPaletteItem, query: string, t: (key: string) => string): number {
+function slashMatchRank(command: SlashCommandPaletteItem, query: string): number {
   const name = command.name.toLowerCase();
-  const description = getSlashDescription(command, t).toLowerCase();
+  const description = (command.description ?? "").toLowerCase();
   if (name === query) return 0;
   if (name.startsWith(query)) return 1;
   if (name.includes(query)) return 2;
   if (description.includes(query)) return 3;
   return 4;
-}
-
-function getSlashDescription(command: SlashCommandPaletteItem, t: (key: string) => string): string {
-  return command.source === "builtin" ? t(command.description ?? "") : command.description ?? "";
 }
 
 // Skill slash commands are named "skill:<skillName>"; look the skill up in the
@@ -832,9 +818,13 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const handleSend = useCallback(async () => {
     const msg = value.trim();
     if (!msg && !attachedImages.length) return;
-    if (isStreaming) return;
+    const isSlashInput = !attachedImages.length && msg.startsWith("/") && !!onBuiltinCommand;
+    // Streaming blocks normal prompts, but slash commands still resolve
+    // locally (panels, toggles) or fail with an explicit notice — never a
+    // silent no-op.
+    if (isStreaming && !isSlashInput) return;
     onAudioUnlock?.();
-    if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
+    if (isSlashInput) {
       const result = await onBuiltinCommand(msg);
       if (result.handled) {
         // The builtin command may resolve after the user kept typing; only
@@ -853,20 +843,20 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
 
   const filteredSlashCommands = useMemo(() => {
     if (slashQuery === null) return [];
-    const commands = [...(isStreaming ? [] : BUILTIN_SLASH_COMMANDS), ...(slashCommands ?? [])];
+    const commands = slashCommands ?? [];
     return [...commands]
       .filter((command) => {
         const name = command.name.toLowerCase();
-        const description = getSlashDescription(command, t).toLowerCase();
+        const description = (command.description ?? "").toLowerCase();
         return name.includes(slashQuery) || description.includes(slashQuery);
       })
       .sort((a, b) => {
-        const rankDelta = slashMatchRank(a, slashQuery, t) - slashMatchRank(b, slashQuery, t);
+        const rankDelta = slashMatchRank(a, slashQuery) - slashMatchRank(b, slashQuery);
         if (rankDelta !== 0) return rankDelta;
         return SLASH_SOURCE_ORDER[a.source] - SLASH_SOURCE_ORDER[b.source]
           || MODEL_OPTION_COLLATOR.compare(a.name, b.name);
       });
-  }, [slashQuery, isStreaming, slashCommands, t]);
+  }, [slashQuery, slashCommands]);
 
   const {
     commands: displayedSlashCommands,
@@ -1188,7 +1178,21 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
         }
         if ((e.key === "Tab" || sendShortcut) && displayedSlashCommands[slashActiveIndex]) {
           e.preventDefault();
-          applySlashCommand(displayedSlashCommands[slashActiveIndex]);
+          const command = displayedSlashCommands[slashActiveIndex];
+          if (sendShortcut && slashQuery && command.name === slashQuery && onBuiltinCommand) {
+            // Exact name match on Enter executes immediately, matching the
+            // TUI. Tab (or a partial match) still fills the input for editing.
+            void onBuiltinCommand(`/${command.name}`).then((result) => {
+              if (result.handled) {
+                if (!result.error) setValue("");
+                setSlashMenuOpen(false);
+              } else {
+                applySlashCommand(command);
+              }
+            });
+            return;
+          }
+          applySlashCommand(command);
           return;
         }
       }
@@ -1236,7 +1240,8 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
 
       if (sendShortcut) {
         e.preventDefault();
-        if (isStreaming && (onSteer || onFollowUp)) {
+        const isSlashInput = !attachedImages.length && value.trim().startsWith("/") && !!onBuiltinCommand;
+        if (isStreaming && !isSlashInput && (onSteer || onFollowUp)) {
           // Default Enter sends as steer if available, else followup
           sendQueued(onSteer ? "steer" : "followup");
         } else {
@@ -1244,7 +1249,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
         }
       }
     },
-    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
+    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, attachedImages, onBuiltinCommand]
   );
 
 
@@ -1454,6 +1459,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
 
   return (
     <div
+      data-chat-composer
       style={{
         flexShrink: 0,
         background: "transparent",
@@ -1870,7 +1876,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                                   lineHeight: 1.35,
                                   color: "var(--text-dim)",
                                 }}>
-                                   {getSlashDescription(command, t)}
+                                   {command.description}
                                 </span>
                               )}
                             </button>
@@ -1986,13 +1992,13 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
               display: "flex",
               gap: 8,
               alignItems: "center",
-              background: "var(--bg)",
+              background: "var(--bg-elevated)",
               border: `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
                 ? "var(--warning-border)"
-                : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
+                : "var(--border-subtle)"}`,
               borderRadius: 14,
               padding: "10px 10px 10px 14px",
-              boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
+              boxShadow: "var(--shadow-md)",
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
           >

@@ -43,3 +43,16 @@ function isTimingEntry(type: string): boolean {
     || type === "branch_summary"
     || type === "custom_message";
 }
+
+/** Format a millisecond duration compactly: "42s", "5m 12s", "2h 3m". */
+export function formatDuration(ms?: number | null): string {
+  if (!ms || ms <= 0 || !Number.isFinite(ms)) return "0s";
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0 && seconds > 0) return `${minutes}m ${seconds}s`;
+  return `${minutes}m`;
+}

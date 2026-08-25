@@ -12,7 +12,8 @@ import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { TodosPanel } from "./TodosPanel";
 import { SubagentRoster } from "./SubagentRoster";
-import { countTodos } from "@/lib/todos";
+import { GoalChip } from "./GoalChip";
+import { countTodos, type TodoPhase } from "@/lib/todos";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useDragDrop } from "@/hooks/useDragDrop";
@@ -44,6 +45,10 @@ interface Props {
   onSystemPromptLoaderChange?: (loader: (() => Promise<void>) | null) => void;
   onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
   onSessionStatsPanelOpen?: () => void;
+  onOpenSettings?: () => void;
+  onOpenNewSession?: (cwd: string) => void;
+  onOpenPlugins?: () => void;
+  onOpenCollab?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
   /** Completion sound state + controls, owned by AppShell so tasks finishing in
@@ -196,6 +201,28 @@ function getUserInputText(message: AgentMessage): string | null {
   return text.length > 0 ? text : null;
 }
 
+/** Compact status-bar label: current in-progress task, else next pending. */
+function todoBarCurrentTask(
+  phases: TodoPhase[],
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  for (const phase of phases) {
+    for (const task of phase.tasks) {
+      if (task.status === "in_progress") {
+        return t("chat.todoBarRunning", { task: task.content });
+      }
+    }
+  }
+  for (const phase of phases) {
+    for (const task of phase.tasks) {
+      if (task.status === "pending") {
+        return t("chat.todoBarNext", { task: task.content });
+      }
+    }
+  }
+  return t("chat.todoBarIdle");
+}
+
 function countToolCalls(messages: AgentMessage[], indices: number[]): number {
   let count = 0;
   for (const idx of indices) {
@@ -278,7 +305,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onOpenNewSession, onOpenPlugins, onOpenCollab, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
 
@@ -311,6 +338,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
     isCompacting, compactError, compactResult, isHandingOff, handoffError, displayModel: displayModelValue, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, todoPhases, setTodos,
     subagents, subagentsUnavailable, refreshSubagents, loadSubagentTranscript,
+    goal,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
@@ -324,7 +352,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
     handleToolPresetChange, handleThinkingLevelChange, handleFastModeChange, handleQueueModeChange, loadSlashCommands, scrollUserMsgToTop,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
-    modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
+    modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen, onOpenSettings, onOpenNewSession, onOpenPlugins, onOpenCollab,
   });
   const sessionBusy = agentRunning || bashRunning;
   const [todosOpen, setTodosOpen] = useState(false);
@@ -354,12 +382,17 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
   }, [session?.id, handleRefreshSubagents]);
   const handleTodosClose = useCallback(() => setTodosOpen(false), []);
 
-  // Auto-open the todo panel while open tasks exist; TodosPanel closes itself
-  // (via onClose) once every task is complete.
+  // One-time per-browser guidance: the first time open tasks appear, show the
+  // panel once so the user learns where tasks live. Afterwards the compact
+  // status bar is the always-visible entry (Kimi K3 design review: automatic
+  // behavior may only lower intrusiveness, never raise it — except once).
   useEffect(() => {
-    if (todoCounts.total > 0 && todoCounts.done < todoCounts.total) {
-      setTodosOpen(true);
-    }
+    if (todoCounts.total === 0 || todoCounts.done >= todoCounts.total) return;
+    let guideShown = false;
+    try { guideShown = window.localStorage.getItem("omp-todo-guide-shown") === "1"; } catch { /* storage unavailable */ }
+    if (guideShown) return;
+    setTodosOpen(true);
+    try { window.localStorage.setItem("omp-todo-guide-shown", "1"); } catch { /* storage unavailable */ }
   }, [todoCounts.total, todoCounts.done]);
 
   useEffect(() => {
@@ -1118,6 +1151,11 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
 
       {/* ── Search bar ──────────────────────────────────────────────────── */}
       <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px`, marginTop: 4 }}>
+        {goal && (
+          <div style={{ maxWidth: 820, margin: "0 auto", marginBottom: 6 }}>
+            <GoalChip goal={goal} />
+          </div>
+        )}
         <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
           <SubagentRoster
             subagents={subagents}
@@ -1126,6 +1164,54 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
             loadTranscript={loadSubagentTranscript}
             sessionId={session?.id ?? sessionIdRef.current ?? undefined}
           />
+          <button
+            type="button"
+            onClick={() => setTodosOpen(true)}
+            disabled={todoCounts.total === 0}
+            title={t("chat.todos")}
+            aria-label={t("chat.todos")}
+            className="toolbar-ghost-btn"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 5,
+              height: 28,
+              minWidth: 28,
+              padding: todoCounts.total > 0 ? "0 8px" : 0,
+              border: "none",
+              borderRadius: 6,
+              fontSize: 12,
+              cursor: todoCounts.total > 0 ? "pointer" : "default",
+              opacity: todoCounts.total > 0 ? 1 : 0.35,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="5" width="18" height="16" rx="2" />
+              <path d="M3 10h18" />
+              <path d="m8 15 2 2 4-4" />
+            </svg>
+            {todoCounts.total > 0 && todoCounts.done < todoCounts.total && (
+              <span
+                style={{
+                  background: "var(--accent)",
+                  color: "var(--bg)",
+                  borderRadius: 999,
+                  minWidth: 16,
+                  height: 16,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  padding: "0 4px",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {todoCounts.total - todoCounts.done}
+              </span>
+            )}
+          </button>
           {!searchOpen ? (
             <button
               type="button"
@@ -1315,6 +1401,98 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
       </div>
 
       <div className="relative">
+        {!todosOpen && todoCounts.total > 0 && todoCounts.done < todoCounts.total && (
+          <div
+            style={{
+              padding: "0 16px 8px",
+              paddingRight: isMobile ? 16 : 52,
+            }}
+          >
+            <div style={{ maxWidth: 820, margin: "0 auto" }}>
+              <button
+                type="button"
+                onClick={() => setTodosOpen(true)}
+                aria-expanded={false}
+                title={t("chat.todos")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  width: "100%",
+                  height: 36,
+                  padding: "0 12px",
+                  borderRadius: 12,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-panel)",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  color: "var(--text)",
+                  textAlign: "left",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-panel)"; }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: todoCounts.blocked > 0 ? "var(--error)" : "var(--accent)",
+                    flexShrink: 0,
+                    ...(todoCounts.inProgress > 0 ? { animation: "pulse 1.4s ease-in-out infinite" } : {}),
+                  }}
+                />
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {todoBarCurrentTask(todoPhases, t)}
+                </span>
+                <span
+                  style={{
+                    width: 64,
+                    height: 4,
+                    borderRadius: 2,
+                    background: "var(--bg-hover)",
+                    overflow: "hidden",
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      display: "block",
+                      height: "100%",
+                      width: `${todoCounts.total === 0 ? 0 : Math.round((todoCounts.done / todoCounts.total) * 100)}%`,
+                      background: todoCounts.blocked > 0 ? "var(--warning)" : "var(--accent)",
+                      transition: "width 0.3s ease",
+                    }}
+                  />
+                </span>
+                <span style={{ fontSize: 12, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                  {todoCounts.done}/{todoCounts.total}
+                </span>
+                {todoCounts.blocked > 0 && (
+                  <span
+                    style={{
+                      minWidth: 16,
+                      height: 16,
+                      padding: "0 4px",
+                      borderRadius: 999,
+                      background: "var(--error)",
+                      color: "var(--bg)",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {todoCounts.blocked}
+                  </span>
+                )}
+                <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>⌄</span>
+              </button>
+            </div>
+          </div>
+        )}
         {todosOpen && (
           <div
             style={{

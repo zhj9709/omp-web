@@ -681,6 +681,10 @@ export function AppShell() {
     setSelectedSession(session);
     hydrateSelectedSession(session.id);
     router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
+    // OMP writes the session file asynchronously; the first list refresh can
+    // race the file landing on disk. Refresh once more shortly after so the
+    // sidebar shows the new session without a manual refresh click.
+    window.setTimeout(() => setRefreshKey((k) => k + 1), 2500);
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
   const deliverSessionNotification = useCallback(({
@@ -1208,7 +1212,7 @@ export function AppShell() {
         style={{
           "--sidebar-width": `${sidebarResizer.width}px`,
           background: "var(--bg-panel)",
-          borderRight: "1px solid var(--border)",
+          borderRight: "1px solid var(--border-subtle)",
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
@@ -1326,7 +1330,7 @@ export function AppShell() {
               {activeTopPanel === "system" && (
                 <div style={{
                   background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
+                  borderBottom: "1px solid var(--border-subtle)",
                 }}>
                   {systemPrompt ? (
                     <div style={{
@@ -1355,7 +1359,7 @@ export function AppShell() {
               {activeTopPanel === "session" && (
                 <div className="session-info-popover" style={{
                   background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
+                  borderBottom: "1px solid var(--border-subtle)",
                   boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
                   padding: "12px 16px",
                 }}>
@@ -1545,6 +1549,10 @@ export function AppShell() {
               onSystemPromptLoaderChange={handleSystemPromptLoaderChange}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
+              onOpenSettings={() => setSettingsConfigOpen(true)}
+              onOpenNewSession={(cwd) => handleNewSession(`slash-${Date.now()}`, cwd)}
+              onOpenPlugins={() => setPluginsConfigOpen(true)}
+              onOpenCollab={() => setCollabConfigOpen(true)}
               onContextUsageChange={handleContextUsageChange}
               onOpenFile={handleOpenLinkedFile}
               soundEnabled={soundEnabled}
@@ -1620,7 +1628,7 @@ export function AppShell() {
           "--right-panel-width": `${rightPanelResizer.width}px`,
           display: "flex",
           flexDirection: "column",
-          borderLeft: "1px solid var(--border)",
+          borderLeft: "1px solid var(--border-subtle)",
           background: "var(--bg)",
         } as React.CSSProperties}
       >
@@ -1632,7 +1640,7 @@ export function AppShell() {
           height: "calc(36px + env(safe-area-inset-top))",
           paddingTop: "env(safe-area-inset-top)",
           background: "var(--bg-panel)",
-          borderBottom: "1px solid var(--border)",
+          borderBottom: "1px solid var(--border-subtle)",
         }}>
           <div style={{ flex: 1, overflow: "hidden" }}>
             <TabBar

@@ -458,7 +458,7 @@ test("keeps a detached viewport in place when streaming completes", () => {
     source.indexOf("// Load model list"),
   );
 
-  assert.match(scrollEffectSource, /!agentRunningRef\.current && isNearBottomRef\.current[\s\S]*?scrollToBottom\("auto"\)/);
+  assert.match(scrollEffectSource, /isNearBottomRef\.current[\s\S]*?scrollToBottom\("auto"\)/);
   assert.doesNotMatch(scrollEffectSource, /\|\|/);
   assert.match(source, /addEventListener\("scroll", handleScrollPositionChange/);
 });
@@ -476,21 +476,18 @@ test("routes the builtin /model command through get_state and set_model", () => 
   assert.match(modelSource, /type: "set_model", provider, modelId/);
 });
 
-test("reloads session resources without the unsupported reload RPC command", () => {
+test("forwards TUI-rename/reload-plugins through the OMP prompt path", () => {
   const slashSource = source.slice(
     source.indexOf("const handleBuiltinSlashCommand = useCallback"),
     source.indexOf("// Let AgentSession.prompt decide"),
   );
-  const reloadSource = slashSource.slice(
-    slashSource.indexOf('case "reload":'),
-    slashSource.indexOf('case "name":'),
-  );
-
-  assert.doesNotMatch(reloadSource, /sendAgentCommand/);
-  assert.match(reloadSource, /loadSession\(sid, false, true\)/);
-  assert.match(reloadSource, /loadTools\(sid\)/);
-  assert.match(reloadSource, /loadSlashCommands\(\)/);
-  assert.match(reloadSource, /loadModels\(\)/);
+  // /reload and /name were removed (not TUI commands); /rename and
+  // /reload-plugins live in the OMP-executable forward list.
+  assert.doesNotMatch(slashSource, /case "reload":/);
+  assert.doesNotMatch(slashSource, /case "name":/);
+  assert.match(source, /rename: true/);
+  assert.match(source, /"reload-plugins": true/);
+  assert.match(slashSource, /type: "prompt", message: text, streamingBehavior: "steer"/);
 });
 
 test("rejects unmapped slash commands with an explicit error", () => {
@@ -502,7 +499,8 @@ test("rejects unmapped slash commands with an explicit error", () => {
     slashSource.indexOf("default: {"),
   );
 
-  assert.match(defaultSource, /startsWith\("skill:"\)/);
+  assert.match(defaultSource, /OMP_EXECUTABLE_SLASH_COMMANDS\[commandName\]/);
+  assert.match(defaultSource, /TUI_ONLY_SLASH_COMMANDS\[commandName\]/);
   assert.match(defaultSource, /return \{ handled: false \};/);
   assert.match(defaultSource, /handled: true, error: `Unknown command/);
 });

@@ -343,8 +343,10 @@ export default function CommandPalette(props: CommandPaletteProps) {
           maxHeight: "min(60vh, 540px)",
           display: "flex",
           flexDirection: "column",
-          background: "var(--bg)",
-          border: "1px solid var(--border)",
+          background: "color-mix(in srgb, var(--bg-floating) 88%, transparent)",
+          backdropFilter: "blur(16px) saturate(1.15)",
+          WebkitBackdropFilter: "blur(16px) saturate(1.15)",
+          border: "1px solid var(--border-subtle)",
           borderRadius: "var(--radius-lg)",
           boxShadow: "var(--shadow-modal)",
           overflow: "hidden",
@@ -361,7 +363,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
             alignItems: "center",
             gap: 10,
             padding: "12px 14px",
-            borderBottom: "1px solid var(--border)",
+            borderBottom: "1px solid var(--border-subtle)",
           }}
         >
           <SearchIcon />

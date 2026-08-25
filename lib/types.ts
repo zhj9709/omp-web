@@ -289,6 +289,12 @@ export interface SessionInfoEntry extends SessionEntryBase {
   name?: string;
 }
 
+export interface ModeChangeEntry extends SessionEntryBase {
+  type: "mode_change";
+  mode: string;
+  data?: Record<string, unknown>;
+}
+
 export type SessionEntry =
   | SessionMessageEntry
   | ThinkingLevelChangeEntry
@@ -299,7 +305,8 @@ export type SessionEntry =
   | CustomMessageEntry
   | LabelEntry
   | SessionInfoEntry
-  | TitleChangeEntry;
+  | TitleChangeEntry
+  | ModeChangeEntry;
 
 export type FileEntry = SessionHeader | SessionEntry;
 

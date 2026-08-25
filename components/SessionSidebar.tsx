@@ -1104,7 +1104,9 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
                   color: "var(--text-dim)",
                 }}
               >
-                 {initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}
+                 {initialSessionId && !restoredRef.current
+                  ? t("sidebar.loadingProject")
+                  : t("sidebar.selectProject")}
               </span>
             )}
             {hasOtherWorkspaceActivity && (
