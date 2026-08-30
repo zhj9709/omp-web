@@ -186,6 +186,7 @@ export const zhCNLocale: LocalePlugin = {
     "files.cancel": "取消",
     "files.checking": "正在检查文件",
     "files.uploading": "正在上传，{progress}%",
+    "chat.newSessionTarget": "新会话 · {cwd}",
     "chat.loadingSession": "正在加载会话...",
     "chat.runningTool": "正在运行工具...",
     "chat.generatingToolInput": "正在生成参数...",

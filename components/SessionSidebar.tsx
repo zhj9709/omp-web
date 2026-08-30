@@ -710,24 +710,31 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   );
 
   // Auto-select cwd and restore session from URL on first load
+  const didAutoSelectRef = useRef(false);
   useEffect(() => {
     if (allSessions.length === 0 || skipInitialProjectSelection) return;
-
-    if (selectedCwd === null) {
-      // If restoring a session, set cwd to match that session
-      if (initialSessionId && !restoredRef.current) {
-        restoredRef.current = true;
-        const target = allSessions.find((s) => s.id === initialSessionId);
-        if (target) {
-          setSelectedCwd(target.cwd);
-          onSelectSession(target, true);
-          return;
-        }
-        // Session not found — notify parent so it can show the placeholder
-        onInitialRestoreDone?.();
-      }
-      if (recentProjects.length > 0) setSelectedCwd(recentProjects[0].root);
+    if (selectedCwd !== null) {
+      didAutoSelectRef.current = true;
+      return;
     }
+    // A null selection set by closing the selected project must NOT re-trigger
+    // the auto-select below — that would yank the user into the next project.
+    if (didAutoSelectRef.current) return;
+    didAutoSelectRef.current = true;
+
+    // If restoring a session, set cwd to match that session
+    if (initialSessionId && !restoredRef.current) {
+      restoredRef.current = true;
+      const target = allSessions.find((s) => s.id === initialSessionId);
+      if (target) {
+        setSelectedCwd(target.cwd);
+        onSelectSession(target, true);
+        return;
+      }
+      // Session not found — notify parent so it can show the placeholder
+      onInitialRestoreDone?.();
+    }
+    if (recentProjects.length > 0) setSelectedCwd(recentProjects[0].root);
   }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, recentProjects]);
 
   // Prefer an exact UI selection while a refetch is in flight. Once the

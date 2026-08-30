@@ -32,6 +32,7 @@ import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
+import { samePath } from "@/lib/paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
   claimExtensionAttentionNotification,
@@ -506,6 +507,12 @@ export function AppShell() {
     invalidateWorkspaceRestore();
     const currentFreshCwd = newSessionCwd ?? activeCwd;
     setActiveCwd(cwd);
+    // A draft composer must never outlive the project it targets: if the user
+    // has selected a different project, drop the stale draft so the next
+    // message cannot land in a project other than the visible one.
+    if (cwd && newSessionCwd && !samePath(newSessionCwd, cwd)) {
+      setNewSessionCwd(null);
+    }
     // Skip if cwd is null (initial mount).
     if (!cwd) return;
     const newProject = projectKey ?? projectRoot ?? cwd;

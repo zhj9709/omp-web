@@ -195,8 +195,7 @@ function getUserInputText(message: AgentMessage): string | null {
     return text.length > 0 ? text : null;
   }
   const text = message.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
+    .map((block) => (block.type === "text" ? block.text : ""))
     .join("\n")
     .trim();
   return text.length > 0 ? text : null;
@@ -515,8 +514,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
       } else if (msg.role === "assistant") {
         const blocks = (msg as AssistantMessage).content;
         text = blocks
-          .filter((b) => b.type === "text")
-          .map((b) => b.text)
+          .map((b) => (b.type === "text" ? b.text : ""))
           .join("\n");
       }
       if (text && text.toLowerCase().includes(q)) {
@@ -1135,6 +1133,21 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
                 <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: 0, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>π</span>
                 <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>OMP Web</span>
                 <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
+                {newSessionCwd && (
+                  <span
+                    title={newSessionCwd}
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-dim)",
+                      fontFamily: "var(--font-mono)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {t("chat.newSessionTarget", { cwd: newSessionCwd })}
+                  </span>
+                )}
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
                 <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
