@@ -5,7 +5,8 @@ import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
-import { getProjectActivity, getRecentProjects, sessionsForProject } from "@/lib/project-groups";
+import { getProjectActivity, getRecentProjects, sessionsForProject, type RecentProject } from "@/lib/project-groups";
+import { addClosedProjectKey, loadClosedProjectKeys, removeClosedProjectKey } from "./closed-projects";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -401,6 +402,9 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   const [homeDir, setHomeDir] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
+  const [closedProjectKeys, setClosedProjectKeys] = useState<Set<string>>(() => new Set(loadClosedProjectKeys()));
+  const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; project: RecentProject } | null>(null);
+  const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const [wtFilter, setWtFilter] = useState("");
   const [customPathOpen, setCustomPathOpen] = useState(false);
   const [customPathValue, setCustomPathValue] = useState("");
@@ -698,6 +702,13 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     return () => { cancelled = true; };
   }, [selectedCwd, wtRefreshKey, refreshKey]);
 
+  // Projects the user closed are hidden from the picker until re-opened via
+  // a custom path (or the underlying sessions are gone, since keys are stable).
+  const recentProjects = useMemo(
+    () => getRecentProjects(allSessions).filter((project) => !closedProjectKeys.has(project.key)),
+    [allSessions, closedProjectKeys],
+  );
+
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
     if (allSessions.length === 0 || skipInitialProjectSelection) return;
@@ -715,10 +726,9 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         // Session not found — notify parent so it can show the placeholder
         onInitialRestoreDone?.();
       }
-      const projects = getRecentProjects(allSessions);
-      if (projects.length > 0) setSelectedCwd(projects[0].root);
+      if (recentProjects.length > 0) setSelectedCwd(recentProjects[0].root);
     }
-  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone]);
+  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, recentProjects]);
 
   // Prefer an exact UI selection while a refetch is in flight. Once the
   // response catches up, the server-resolved path handles Windows case and
@@ -754,6 +764,8 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         setCustomPathError(data.error ?? `HTTP ${res.status}`);
         return;
       }
+      // Opening a path inside a closed project re-opens it in the picker.
+      setClosedProjectKeys((prev) => removeClosedProjectKey(prev, data.projectKey!));
       setValidatedProject({
         cwd: data.cwd,
         root: data.projectRoot,
@@ -790,6 +802,15 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       // ignore
     }
   }, []);
+
+  const handleCloseProject = useCallback((project: RecentProject) => {
+    setProjectContextMenu(null);
+    setClosedProjectKeys((prev) => addClosedProjectKey(prev, project.key));
+    // Closing the project that is currently selected drops the selection so
+    // the parent falls back to the "no workspace" placeholder. The list stays
+    // open so several projects can be closed in a row.
+    if (projectFor(selectedCwd)?.key === project.key) setSelectedCwd(null);
+  }, [projectFor, selectedCwd]);
 
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
@@ -865,6 +886,12 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         setDropdownOpen(false);
         setProjectFilter("");
       }
+      // The context menu lives inside the dropdown container, so it needs its
+      // own outside check — a blank-area click closes the dropdown but must
+      // also dismiss the menu.
+      if (projectMenuRef.current && !projectMenuRef.current.contains(e.target as Node)) {
+        setProjectContextMenu(null);
+      }
       if (wtDropdownRef.current && !wtDropdownRef.current.contains(e.target as Node)) {
         setWtDropdownOpen(false);
         setWtNewOpen(false);
@@ -877,6 +904,16 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  // Dismiss the project context menu on Escape
+  useEffect(() => {
+    if (!projectContextMenu) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProjectContextMenu(null);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [projectContextMenu]);
 
   // Clicking a session moves the effective cwd to that session's worktree.
   // Done on the click path (not via the selectedCwd prop sync) so it also
@@ -897,7 +934,6 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     onNewSession?.(tempId, selectedCwd);
   }, [selectedCwd, onNewSession]);
 
-  const recentProjects = getRecentProjects(allSessions);
   const showProjectFilter = recentProjects.length > 8;
   const visibleProjects = projectFilter.trim()
     ? recentProjects.filter((project) => project.root.toLowerCase().includes(projectFilter.trim().toLowerCase()))
@@ -1180,6 +1216,10 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
                       setCustomPathError(null);
                       setDropdownOpen(false);
                     }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setProjectContextMenu({ x: e.clientX, y: e.clientY, project });
+                    }}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -1268,6 +1308,44 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
                 <span>{t("sidebar.customPath")}</span>
               </button>
           </AnimatedDropdown>
+
+          {projectContextMenu && (
+            <div
+              ref={projectMenuRef}
+              style={{
+                position: "fixed",
+                left: projectContextMenu.x,
+                top: projectContextMenu.y,
+                zIndex: 1000,
+                minWidth: 140,
+                background: "var(--bg-panel, var(--bg))",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                boxShadow: "var(--shadow-menu)",
+                overflow: "hidden",
+              }}
+            >
+              <button
+                onClick={() => handleCloseProject(projectContextMenu.project)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "7px 12px",
+                  background: "none",
+                  border: "none",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+              >
+                {t("sidebar.closeProject")}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Worktree switcher — shown only for git projects at a checkout top

@@ -107,6 +107,7 @@ export const enLocale: LocalePlugin = {
     "sidebar.noMatchingProjects": "No matching projects",
     "sidebar.useDefaultDirectory": "Use default directory",
     "sidebar.customPath": "Custom path…",
+    "sidebar.closeProject": "Close project",
     "directoryPicker.selectDirectory": "Select directory",
     "directoryPicker.goToParent": "Go to parent directory",
     "directoryPicker.directoryPath": "Directory path",
