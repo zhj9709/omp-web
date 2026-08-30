@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { statSync, unlinkSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, statSync, unlinkSync, readFileSync, writeFileSync } from "fs";
 import { lock } from "proper-lockfile";
 import {
   resolveSessionPath,
@@ -29,7 +29,11 @@ export async function GET(
   try {
     const rpc = getRpcSession(id);
     const liveRpc = rpc?.isAlive() ? rpc : undefined;
-    const resolvedPath = liveRpc?.sessionFile || await resolveSessionPath(id);
+    // omp deletes empty transient session files on exit; a live wrapper whose
+    // file vanished is broken — resolve from disk instead of failing with ENOENT.
+    let liveFile = liveRpc?.sessionFile;
+    if (liveFile && !existsSync(liveFile)) liveFile = undefined;
+    const resolvedPath = liveFile || await resolveSessionPath(id);
     if (!resolvedPath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }

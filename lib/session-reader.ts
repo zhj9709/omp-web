@@ -304,10 +304,20 @@ function getPathToIdCache(): Map<string, string> {
 }
 
 export async function resolveSessionPath(sessionId: string): Promise<string | null> {
-  const cached = getPathCache().get(sessionId);
-  if (cached) return cached;
+  const pathCache = getPathCache();
+  const cached = pathCache.get(sessionId);
+  if (cached) {
+    // A cached path can go stale (e.g. omp removes an empty transient session
+    // file). Verify it still exists; otherwise drop it and re-scan so the id
+    // resolves to its real file instead of failing with ENOENT.
+    try { if (statSync(cached).isFile()) return cached; } catch { /* stale entry */ }
+    pathCache.delete(sessionId);
+    const reverseCache = getPathToIdCache();
+    const cachedKey = sessionPathKey(cached);
+    if (reverseCache.get(cachedKey) === sessionId) reverseCache.delete(cachedKey);
+  }
   await listAllSessions();
-  return getPathCache().get(sessionId) ?? null;
+  return pathCache.get(sessionId) ?? null;
 }
 
 export async function resolveSessionIdByPath(filePath: string): Promise<string | undefined> {
