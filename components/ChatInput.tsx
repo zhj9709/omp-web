@@ -23,6 +23,7 @@ import {
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
 import { FolderIcon, getFileIcon } from "./FileIcons";
+import { chatColumnWidth, useChatWidthPct } from "@/lib/chat-width-preference";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import type { ToolPreset } from "@/lib/tool-presets";
@@ -452,6 +453,8 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
 }: Props, ref) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  const [chatWidthPct] = useChatWidthPct();
+  const chatColumnMax = chatColumnWidth(chatWidthPct);
   const [value, setValue] = useState(() => (draftKey ? getDraft(draftKey)?.value ?? "" : ""));
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -1480,7 +1483,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
           e.target.value = "";
         }}
       />
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+      <div style={{ maxWidth: chatColumnMax, margin: "0 auto" }}>
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
         {/* Queued steering / follow-up messages (delivered by pi on upcoming turns) */}

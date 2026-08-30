@@ -13,6 +13,7 @@ import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { TodosPanel } from "./TodosPanel";
 import { SubagentRoster } from "./SubagentRoster";
 import { GoalChip } from "./GoalChip";
+import { chatColumnWidth, useChatWidthPct } from "@/lib/chat-width-preference";
 import { countTodos, type TodoPhase } from "@/lib/todos";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -307,6 +308,8 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
 
 export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onOpenNewSession, onOpenPlugins, onOpenCollab, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
+  const [chatWidthPct] = useChatWidthPct();
+  const chatColumnMax = chatColumnWidth(chatWidthPct);
   const isMobile = useIsMobile();
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
@@ -1115,7 +1118,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
 
       {isEmptyNew ? (
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
-          <div className="w-full max-w-[820px]">
+          <div className="w-full" style={{ maxWidth: chatColumnMax }}>
             <div
               className="mb-3"
               style={{
@@ -1154,11 +1157,11 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
       {/* ── Search bar ──────────────────────────────────────────────────── */}
       <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px`, marginTop: 4 }}>
         {goal && (
-          <div style={{ maxWidth: 820, margin: "0 auto", marginBottom: 6 }}>
+          <div style={{ maxWidth: chatColumnMax, margin: "0 auto", marginBottom: 6 }}>
             <GoalChip goal={goal} />
           </div>
         )}
-        <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
+        <div style={{ maxWidth: chatColumnMax, margin: "0 auto", display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4 }}>
           <SubagentRoster
             subagents={subagents}
             unavailable={subagentsUnavailable}
@@ -1356,7 +1359,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
       </div>
         <div ref={scrollContainerRef} className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-            <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
+            <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: chatColumnMax, margin: "0 auto" }}>
             {renderedMessages}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
               <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
@@ -1410,7 +1413,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
               paddingRight: isMobile ? 16 : 52,
             }}
           >
-            <div style={{ maxWidth: 820, margin: "0 auto" }}>
+            <div style={{ maxWidth: chatColumnMax, margin: "0 auto" }}>
               <button
                 type="button"
                 onClick={() => setTodosOpen(true)}
@@ -1502,7 +1505,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
               paddingRight: isMobile ? 16 : 52,
             }}
           >
-            <div style={{ maxWidth: 820, margin: "0 auto" }}>
+            <div style={{ maxWidth: chatColumnMax, margin: "0 auto" }}>
               <TodosPanel
                 phases={todoPhases}
                 onChange={setTodos}
