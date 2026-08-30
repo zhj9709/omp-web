@@ -404,14 +404,13 @@ button.extension-widget-trigger:focus-visible {
   background: var(--text-dim);
 }
 
-/* Unified input focus: soft accent ring instead of the browser default. */
+/* Unified input focus: tinted border instead of the browser default outline. */
 textarea:focus,
 input:focus,
 select:focus {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 62%, var(--border)) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s;
 }
 button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
