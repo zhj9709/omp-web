@@ -94,7 +94,7 @@ app/api/
   git/status/route.ts                      GET git status for a cwd
   home/route.ts                            GET user home directory
   memory/route.ts                          GET aggregated memories (per-project mnemopi banks, read-only)
-  models/route.ts                          GET models (models.db + config.yml + models.yaml, sanitized)
+  models/route.ts                          GET models (models.db + config.yml + models.yml/models.yaml, sanitized)
   models-config/route.ts                   GET read config | PUT deep-merge write (keys preserved)
   models-config/catalog/route.ts           GET models.dev pricing presets
   models-config/discover/route.ts          POST fetch a provider's upstream model list
@@ -122,7 +122,7 @@ app/api/
 These return `{ error: ..., feature_unavailable: true }` (or an equivalent message) and
 must stay honest in the UI — they are not implemented in OMP RPC mode:
 
-- `auth/api-key/[provider]` — API-key management (configure in `models.yaml` or use the OMP CLI).
+- `auth/api-key/[provider]` — API-key management (configure in models.yml/models.yaml or use the OMP CLI).
 - `models-config/test` — model connectivity testing (use the OMP CLI).
 - `project-trust` POST — OMP v17.3.5 has no project-trust system (GET returns a fixed
   "not applicable" status; no trust gate exists).
@@ -136,10 +136,10 @@ must stay honest in the UI — they are not implemented in OMP RPC mode:
   session-reader.ts       direct JSONL reading, session listing, getAgentDir(), path cache
   session-path.ts         session id/path encoding helpers
   session-file-references.ts  validate a bash-output path is referenced by a session
-  omp-models.ts           reads models.db + config.yml + models.yaml (API keys stripped)
+  omp-models.ts           reads models.db + config.yml + models.yml/models.yaml (API keys stripped)
   model-catalog.ts        models.dev pricing presets
   model-discovery.ts      parse upstream model lists
-  model-discovery-auth.ts resolve discovery API key (request body, else models.yaml)
+  model-discovery-auth.ts resolve discovery API key (request body, else models.yml/models.yaml)
   bash-output.ts          bash temp output resolution + inline size limits
   git-changes.ts          git status/diff helpers
   git-status.ts / git-types.ts
@@ -224,10 +224,19 @@ resolve to `join(homedir(), ".omp", "agent")` with **no environment override**. 
 files live at `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`.
 
 ### Models come from OMP storage, never from the pi SDK
-`GET /api/models` reads `models.db` (SQLite), `config.yml`, and `models.yaml` under
-`~/.omp/agent/`. `models.yaml` parsing strips API keys — keys are never returned to the
+`GET /api/models` reads `models.db` (SQLite), `config.yml`, and `models.yml`/`models.yaml`
+under `~/.omp/agent/`. The yaml parsing strips API keys — keys are never returned to the
 client. The only place a stored key is read is `model-discovery-auth.ts`, server-side, to
 make an authenticated upstream model-list request.
+
+OMP accepts both `models.yml` and `models.yaml`; `getOmpModelsYamlPath()` prefers an
+existing `models.yml` and falls back to `models.yaml`, so reads and writes stay on one
+file. The model picker lists exactly what omp's
+own picker offers: `getOmpModelList()` runs `omp models --json` (5-min cache, `OMP_BINARY`
+respected) as the primary source — it is the only way to see login-configured providers,
+whose credentials live in agent.db, which must never be read directly. Fallbacks when the
+CLI is unavailable: models.yml custom providers first, then models.db's `model_cache`.
+See `readOmpConfiguredProviders()` and `invalidateOmpModelListCache()` (`lib/omp-models.ts`).
 
 `PUT /api/models-config` writes through `lib/models-config-writer.ts`: a deep merge onto
 the on-disk yaml. Client-supplied scalars win; credentials and nested blocks the client
@@ -328,7 +337,7 @@ until the response returns.
 - Host/origin allow-listing is enforced by `lib/request-security.ts` plus
   `OMP_WEB_ALLOWED_HOSTS`.
 - Credentials, API keys, tokens, and sensitive fields from OMP credential storage MUST
-  NOT be read or echoed. `models.yaml` parsing strips keys before they reach the client.
+  NOT be read or echoed. Yaml parsing strips keys before they reach the client.
 
 ---
 

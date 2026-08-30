@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,11 @@ export function getOmpConfigPath(): string {
   return join(ompAgentDir(), "config.yml");
 }
 
+// OMP accepts both `models.yml` and `models.yaml`. Prefer whichever file
+// exists so reads and the config writer stay on the same one.
 export function getOmpModelsYamlPath(): string {
+  const yml = join(ompAgentDir(), "models.yml");
+  if (existsSync(yml)) return yml;
   return join(ompAgentDir(), "models.yaml");
 }
 
@@ -343,6 +348,158 @@ export function readOmpModelsYaml(): Record<string, unknown> {
 /** Drop the 30s models.yaml cache — called by the config writer after a save. */
 export function invalidateModelsYamlCache(): void {
   _modelsYamlCache = null;
+  _configuredProvidersCache = undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Custom provider config (models.yml / models.yaml) — full parse including
+// each provider's `models:` list, unlike the sanitized scalar-only view above.
+// ---------------------------------------------------------------------------
+
+export interface OmpProviderConfig {
+  providerId: string;
+  baseUrl?: string;
+  api?: string;
+  models: OmpModel[];
+}
+
+let _configuredProvidersCache: OmpProviderConfig[] | undefined;
+
+function stripQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 &&
+      ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+       (trimmed.startsWith("'") && trimmed.endsWith("'")))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function applyModelField(model: OmpModel, content: string): void {
+  const colonIdx = content.indexOf(":");
+  if (colonIdx === -1) return;
+  const key = content.slice(0, colonIdx).trim();
+  const value = stripQuotes(content.slice(colonIdx + 1).trim());
+  switch (key) {
+    case "id": model.id = value; break;
+    case "name": model.name = value; break;
+    case "api": model.api = value; break;
+    case "baseUrl": model.baseUrl = value; break;
+    case "reasoning": model.reasoning = value === "true"; break;
+    case "contextWindow": model.contextWindow = Number(value) || undefined; break;
+    case "maxTokens": model.maxTokens = Number(value) || undefined; break;
+  }
+}
+
+/**
+ * Read user-configured custom providers (OMP accepts models.yml or
+ * models.yaml) with their full model lists. Returns [] when no config file
+ * exists.
+ */
+export function readOmpConfiguredProviders(): OmpProviderConfig[] {
+  if (_configuredProvidersCache !== undefined) return _configuredProvidersCache;
+
+  const path = getOmpModelsYamlPath();
+  if (!existsSync(path)) {
+    _configuredProvidersCache = [];
+    return _configuredProvidersCache;
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch {
+    _configuredProvidersCache = [];
+    return _configuredProvidersCache;
+  }
+
+  const providers: OmpProviderConfig[] = [];
+  let current: OmpProviderConfig | null = null;
+  let currentModel: OmpModel | null = null;
+  // Where we are inside the current provider: the scalar keys, the `models:`
+  // list, or a block we don't care about (headers:, discovery:, …).
+  let section: "keys" | "models" | "other" = "keys";
+  let thinking: OmpModel["thinking"] | null = null;
+
+  for (const line of raw.split("\n")) {
+    const leading = line.length - line.trimStart().length;
+    const content = line.trim();
+    if (content === "" || content.startsWith("#")) continue;
+
+    if (leading === 0) {
+      current = null;
+      currentModel = null;
+      continue;
+    }
+
+    if (leading === 2) {
+      const name = content.endsWith(":") ? content.slice(0, -1).trim() : content;
+      if (!name) continue;
+      current = { providerId: name, models: [] };
+      providers.push(current);
+      currentModel = null;
+      section = "keys";
+      continue;
+    }
+
+    if (!current) continue;
+
+    if (leading === 4) {
+      currentModel = null;
+      thinking = null;
+      const colonIdx = content.indexOf(":");
+      const key = colonIdx === -1 ? content : content.slice(0, colonIdx).trim();
+      const value = colonIdx === -1 ? "" : stripQuotes(content.slice(colonIdx + 1).trim());
+      if (key === "models") {
+        section = "models";
+      } else if (key === "headers" || key === "discovery" || key === "modelOverrides" || value === "") {
+        section = "other";
+      } else {
+        section = "keys";
+        if (key === "baseUrl") current.baseUrl = value;
+        else if (key === "api") current.api = value;
+      }
+      continue;
+    }
+
+    if (leading === 6 && section === "models") {
+      const item = content.startsWith("- ") ? content.slice(2).trim() : content;
+      const model: OmpModel = { id: "" };
+      current.models.push(model);
+      currentModel = model;
+      thinking = null;
+      if (item.includes(":")) applyModelField(model, item);
+      continue;
+    }
+
+    if (leading >= 8 && currentModel) {
+      if (content === "thinking:") {
+        thinking = {};
+        currentModel.thinking = thinking;
+        continue;
+      }
+      if (thinking && content.startsWith("- ")) {
+        thinking.efforts = [...(thinking.efforts ?? []), stripQuotes(content.slice(2))];
+        continue;
+      }
+      const colonIdx = content.indexOf(":");
+      const key = colonIdx === -1 ? content : content.slice(0, colonIdx).trim();
+      const value = colonIdx === -1 ? "" : content.slice(colonIdx + 1).trim();
+      if (thinking && key === "mode") {
+        thinking.mode = stripQuotes(value);
+      } else if (thinking && key === "efforts") {
+        const inline = value.startsWith("[") && value.endsWith("]")
+          ? value.slice(1, -1).split(",").map((s) => stripQuotes(s)).filter(Boolean)
+          : [];
+        thinking.efforts = inline;
+      } else if (!thinking) {
+        applyModelField(currentModel, content);
+      }
+    }
+  }
+
+  _configuredProvidersCache = providers;
+  return _configuredProvidersCache;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,37 +547,137 @@ export function parseModelRole(
 // Derived data
 // ---------------------------------------------------------------------------
 
-export function getOmpModelList(): OmpModelListEntry[] {
-  const providers = readOmpModels();
+// `omp models --json` is the authoritative model list: it resolves
+// login-configured providers (whose credentials live in agent.db, which this
+// module must never read) on top of models.yml custom providers. Used as the
+// primary source; the file-based paths below are the fallback when the CLI is
+// unavailable.
+let _cliModelListCache: { entries: OmpModelListEntry[]; ts: number } | null = null;
+let _cliModelListInflight: Promise<OmpModelListEntry[] | null> | null = null;
+
+const OMP_MODELS_CLI_TTL_MS = 5 * 60_000;
+const OMP_MODELS_CLI_TIMEOUT_MS = 10_000;
+
+/** Drop the CLI model-list cache — called after a config write. */
+export function invalidateOmpModelListCache(): void {
+  _cliModelListCache = null;
+}
+
+function runOmpModelsJson(): Promise<OmpModelListEntry[] | null> {
+  return new Promise((resolve) => {
+    const bin = process.env.OMP_BINARY ?? "omp";
+    const child = spawn(bin, ["models", "--json"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+      shell: process.platform === "win32",
+    });
+    let stdout = "";
+    let settled = false;
+    const done = (value: OmpModelListEntry[] | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      done(null);
+    }, OMP_MODELS_CLI_TIMEOUT_MS);
+    child.on("error", () => done(null));
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.on("close", (code) => {
+      if (code !== 0) return done(null);
+      try {
+        const parsed = JSON.parse(stdout) as {
+          models?: Array<{
+            provider?: string;
+            id?: string;
+            name?: string;
+            contextWindow?: number;
+            maxTokens?: number;
+            thinking?: string[];
+            cost?: OmpModel["cost"];
+          }>;
+        };
+        const entries: OmpModelListEntry[] = [];
+        for (const m of parsed.models ?? []) {
+          if (!m.provider || !m.id) continue;
+          entries.push({
+            id: m.id,
+            name: m.name ?? m.id,
+            provider: m.provider,
+            thinkingLevels: m.thinking ?? [],
+            contextWindow: m.contextWindow,
+            maxTokens: m.maxTokens,
+            cost: m.cost,
+          });
+        }
+        done(entries);
+      } catch {
+        done(null);
+      }
+    });
+  });
+}
+
+async function getOmpCliModelList(): Promise<OmpModelListEntry[] | null> {
+  const now = Date.now();
+  if (_cliModelListCache && now - _cliModelListCache.ts < OMP_MODELS_CLI_TTL_MS) {
+    return _cliModelListCache.entries;
+  }
+  if (!_cliModelListInflight) {
+    _cliModelListInflight = runOmpModelsJson().finally(() => {
+      _cliModelListInflight = null;
+    });
+  }
+  const entries = await _cliModelListInflight;
+  if (entries && entries.length > 0) {
+    _cliModelListCache = { entries, ts: now };
+    return entries;
+  }
+  return _cliModelListCache?.entries ?? null;
+}
+
+export async function getOmpModelList(): Promise<OmpModelListEntry[]> {
   const config = readOmpConfig();
   const disabledList = config.disabledProviders as string[] | undefined;
   const disabled = new Set(disabledList ?? []);
+
+  const cli = await getOmpCliModelList();
+  if (cli && cli.length > 0) {
+    return cli
+      .filter((entry) => !disabled.has(entry.provider))
+      .map((entry) => ({
+        ...entry,
+        thinkingLevels: entry.thinkingLevels.length > 0 ? entry.thinkingLevels : ["off"],
+      }));
+  }
+
   const modelRoles = config.modelRoles as Record<string, string> | undefined;
 
-  const thinkingLevelMap = new Map<string, string>();
-  if (modelRoles) {
-    for (const role of Object.values(modelRoles)) {
-      const parsed = parseModelRole(role);
-      if (parsed) {
-        thinkingLevelMap.set(
-          `${parsed.provider}/${parsed.modelId}`,
-          parsed.thinkingLevel ?? "off",
-        );
-      }
-    }
-  }
+  // Fallback when the OMP CLI is unavailable: user-configured custom providers
+  // (models.yml) win when present — the picker should list exactly the models
+  // the user set up, not the whole model_cache.
+  const configured = readOmpConfiguredProviders().filter((p) => p.models.length > 0);
+  const sources: Array<{ providerId: string; api?: string; models: OmpModel[] }> =
+    configured.length > 0
+      ? configured
+      : readOmpModels();
 
   const result: OmpModelListEntry[] = [];
 
-  for (const provider of providers) {
+  for (const provider of sources) {
     if (disabled.has(provider.providerId)) continue;
     for (const model of provider.models) {
+      if (!model.id) continue;
       const thinking = model.thinking?.efforts ?? [];
       result.push({
         id: model.id,
         name: model.name ?? model.id,
         provider: provider.providerId,
-        api: model.api,
+        api: model.api ?? provider.api,
         thinkingLevels: thinking.length > 0 ? thinking : ["off"],
         contextWindow: model.contextWindow,
         maxTokens: model.maxTokens,

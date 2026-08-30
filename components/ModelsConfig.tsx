@@ -154,6 +154,7 @@ interface ProviderEntry {
 
 interface ModelsJson {
   providers?: Record<string, ProviderEntry>;
+  modelsPath?: string;
 }
 
 type ModelTestState =
@@ -1909,6 +1910,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
+  const [modelsPath, setModelsPath] = useState<string>("~/.omp/agent/models.yml / models.yaml");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -1961,6 +1963,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
       .then((d: ModelsJson) => {
         const normalized = d.providers ? d : { ...d, providers: {} };
         setConfig(normalized);
+        if (d.modelsPath) setModelsPath(d.modelsPath);
         const keys = Object.keys(normalized.providers ?? {});
         if (keys.length > 0) setSelection({ type: "provider", name: keys[0] });
       })
@@ -2136,7 +2139,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
              <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>{t("common.models")}</span>
-            <code style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>~/.omp/agent/models.yaml</code>
+            <code style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }} title={modelsPath}>{modelsPath}</code>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "2px 6px" }}>×</button>
         </div>

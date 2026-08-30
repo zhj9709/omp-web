@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { readOmpModelsYaml, getOmpModelList } from "@/lib/omp-models";
+import { readOmpModelsYaml, getOmpModelList, getOmpModelsYamlPath } from "@/lib/omp-models";
 import { ModelsConfigValidationError, writeModelsConfig } from "@/lib/models-config-writer";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   const yamlConfig = readOmpModelsYaml();
-  const modelList = getOmpModelList();
+  const modelList = await getOmpModelList();
 
   // Build a response shape compatible with ModelsJson
   const providers: Record<string, Record<string, unknown>> = {};
@@ -42,7 +42,8 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({ providers });
+  // modelsPath is display metadata for the config UI header (no secrets).
+  return NextResponse.json({ providers, modelsPath: getOmpModelsYamlPath() });
 }
 
 /**

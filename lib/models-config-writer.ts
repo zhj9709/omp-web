@@ -35,6 +35,7 @@ import {
   getOmpModelList,
   getOmpModelsYamlPath,
   invalidateModelsYamlCache,
+  invalidateOmpModelListCache,
   type OmpModelListEntry,
 } from "./omp-models";
 
@@ -198,7 +199,7 @@ export async function writeModelsConfig(
   modelsPath = getOmpModelsYamlPath(),
 ): Promise<void> {
   const diskRaw = existsSync(modelsPath) ? readFileSync(modelsPath, "utf8") : "";
-  const next = mergeModelsConfig(diskRaw, body, getOmpModelList());
+  const next = mergeModelsConfig(diskRaw, body, await getOmpModelList());
   const yaml = dump(next, { lineWidth: -1, noRefs: true });
 
   const dir = dirname(modelsPath);
@@ -212,6 +213,7 @@ export async function writeModelsConfig(
     writeFileSync(tmp, yaml, { mode: 0o600 });
     renameSync(tmp, modelsPath);
     invalidateModelsYamlCache();
+    invalidateOmpModelListCache();
   };
 
   if (!existsSync(modelsPath)) {

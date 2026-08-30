@@ -15,7 +15,7 @@ function compareModelEntries(
 
 export async function GET() {
   try {
-    const modelList = getOmpModelList();
+    const modelList = await getOmpModelList();
     const defaultModel = getOmpDefaultModel();
     const thinkingLevelPins = getOmpThinkingLevelPins();
     const modelRoles = getOmpModelRoles();
