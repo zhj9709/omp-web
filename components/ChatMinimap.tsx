@@ -603,7 +603,24 @@ export const ChatMinimap = memo(function ChatMinimap({
     previewBox.scrollTop = Math.max(0, targetTop);
   }, [allNodes, minimapHovered, nearestNodeIndex]);
 
-  if (!visible) return null;
+  // Always mount the column (even before the first measurement marks it
+  // visible): reserving the 36px strip up front keeps the chat column from
+  // shifting sideways once nodes appear. Rail, nodes and preview only render
+  // once visible.
+  if (!visible) {
+    return (
+      <div
+        ref={containerRef}
+        aria-hidden="true"
+        style={{
+          width: MINIMAP_WIDTH,
+          flexShrink: 0,
+          borderLeft: "1px solid var(--border)",
+          background: "var(--bg-panel)",
+        }}
+      />
+    );
+  }
 
   const lastNodeTop = positionedNodes.length > 0
     ? positionedNodes[positionedNodes.length - 1].topRatio * minimapHeight
