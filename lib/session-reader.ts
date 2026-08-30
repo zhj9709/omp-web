@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, readdirSync, statSync } from "fs";
+import { closeSync, openSync, readSync, readdirSync, statSync, type Stats } from "fs";
 import { homedir } from "os";
 import { join, normalize as normalizePath } from "path";
 import { StringDecoder } from "string_decoder";
@@ -57,6 +57,42 @@ export function mergeSessionLists(
 // ============================================================================
 
 const SESSIONS_DIR = join(homedir(), ".omp", "agent", "sessions");
+
+/**
+ * Timestamp of the last meaningful entry, read from the file tail. The file
+ * mtime is not usable as "last activity": omp appends lifecycle records
+ * (`session_exit` etc.) to the jsonl whenever an RPC child starts/disposes,
+ * so merely viewing a session in the web UI bumps its mtime days after the
+ * real conversation ended. Lifecycle-only tail (or read failure) falls back
+ * to the mtime.
+ */
+const MEANINGFUL_ENTRY_TYPES = new Set(["message", "compaction", "model_change", "session_info"]);
+const MODIFIED_TAIL_BYTES = 64 * 1024;
+
+function readLastModified(filePath: string, stat: Stats): string {
+  try {
+    const fd = openSync(filePath, "r");
+    try {
+      const length = Math.min(MODIFIED_TAIL_BYTES, stat.size);
+      const buffer = Buffer.allocUnsafe(length);
+      const bytesRead = readSync(fd, buffer, 0, length, stat.size - length);
+      const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
+      // Drop the final fragment: it is a partial line unless the tail caught
+      // the exact end of a newline-terminated file.
+      if (bytesRead === length && stat.size > length) lines.pop();
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        try {
+          const entry = JSON.parse(line) as Record<string, unknown>;
+          if (!MEANINGFUL_ENTRY_TYPES.has(String(entry.type))) continue;
+          if (typeof entry.timestamp === "string" && entry.timestamp) return entry.timestamp;
+        } catch { /* skip unparseable line */ }
+      }
+    } finally { closeSync(fd); }
+  } catch { /* fall through to mtime */ }
+  return stat.mtime.toISOString();
+}
 
 function readFileLines(filePath: string, maxLines: number): (Record<string, unknown> | null)[] {
   const fd = openSync(filePath, "r");
@@ -157,7 +193,7 @@ function scanEncodedCwdDir(dirPath: string): SessionInfo[] {
 
     results.push({
       path: filePath, id, cwd, name: name_,
-      created: timestamp, modified: stat.mtime.toISOString(),
+      created: timestamp, modified: readLastModified(filePath, stat),
       messageCount, firstMessage,
       parentSessionId: undefined, transient: false,
     });
