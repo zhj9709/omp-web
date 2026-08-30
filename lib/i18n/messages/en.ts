@@ -610,6 +610,8 @@ export const enLocale: LocalePlugin = {
     "settings.clear": "Clear",
     "settings.apply": "Apply",
     "settings.invalidJson": "Invalid JSON",
+    "settings.chatWidth": "Chat width",
+    "settings.chatWidthDesc": "Max width of the chat content column, as a percentage of the default 820px; range 50–150, applies immediately",
     "settings.tab.appearance": "Appearance",
     "settings.tab.model": "Model",
     "settings.tab.interaction": "Interaction",

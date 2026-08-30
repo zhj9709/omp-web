@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { SETTINGS_SCHEMA, SETTINGS_TABS, type SettingDef } from "@/lib/settings-schema";
 import { SETTINGS_GROUPS_ZH, SETTINGS_ZH } from "@/lib/settings-i18n-zh";
 import { useI18n } from "@/hooks/useI18n";
+import { useChatWidthPct } from "@/lib/chat-width-preference";
 
 /* ------------------------------------------------------------------ */
 /* Dotted-path helpers                                                 */
@@ -299,6 +300,28 @@ function RolesEditor({ roles, models, onChange }: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Web-local settings (browser prefs, apply immediately, not in config.yml) */
+/* ------------------------------------------------------------------ */
+
+/** Chat column width — web-local, rendered inside the Display group. */
+function ChatWidthRow() {
+  const { t } = useI18n();
+  const [chatWidthPct, setChatWidthPct] = useChatWidthPct();
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, padding: "10px 2px" }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={rowLabelStyle}>{t("settings.chatWidth")}</div>
+        <div style={rowDescStyle}>{t("settings.chatWidthDesc")}</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        <NumberControl value={chatWidthPct} onChange={setChatWidthPct} />
+        <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>%</span>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Main panel                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -527,6 +550,7 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
                     onChange={(v) => change(def, v)}
                   />
                 ))}
+                {activeTab === "appearance" && group === "Display" && <ChatWidthRow />}
               </div>
             ))}
             {groups.length === 0 && (

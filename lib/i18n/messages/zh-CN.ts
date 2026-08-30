@@ -610,6 +610,8 @@ export const zhCNLocale: LocalePlugin = {
     "settings.clear": "清除",
     "settings.apply": "应用",
     "settings.invalidJson": "JSON 无效",
+    "settings.chatWidth": "会话宽度",
+    "settings.chatWidthDesc": "会话内容列的最大宽度，为默认宽度（820px）的百分比，范围 50–150，立即生效",
     "settings.tab.appearance": "外观",
     "settings.tab.model": "模型",
     "settings.tab.interaction": "交互",
