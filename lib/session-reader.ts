@@ -611,19 +611,46 @@ function resolveThinkingLevel(pathEntries: SessionEntry[]): string {
   return "off";
 }
 
-function resolveModel(pathEntries: SessionEntry[]): { provider: string; modelId: string } | null {
-  for (let i = pathEntries.length - 1; i >= 0; i--) {
-    const e = pathEntries[i];
-    if (e.type !== "model_change") continue;
-    if (e.model) {
-      const slash = e.model.indexOf("/");
-      return slash !== -1
-        ? { provider: e.model.slice(0, slash), modelId: e.model.slice(slash + 1) }
-        : { provider: "", modelId: e.model };
+/**
+ * The session's current model, found by walking the full parent chain from the
+ * leaf. It must NOT be resolved from the compaction-sliced context entries:
+ * compaction folds pre-summary entries (including model_change records) away,
+ * but the model carries over across compactions.
+ *
+ * model_change records are not always present or on the active branch, so the
+ * walk also remembers the nearest assistant message's provider/model as a
+ * fallback.
+ */
+function resolveModel(
+  leafId: string | null | undefined,
+  byId: Map<string, SessionEntry>,
+): { provider: string; modelId: string } | null {
+  if (leafId === null) return null;
+  let currentId: string | null = leafId ?? null;
+  const visited = new Set<string>();
+  let fallback: { provider: string; modelId: string } | null = null;
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const e = byId.get(currentId);
+    if (!e) break;
+    if (e.type === "model_change") {
+      if (e.model) {
+        const slash = e.model.indexOf("/");
+        return slash !== -1
+          ? { provider: e.model.slice(0, slash), modelId: e.model.slice(slash + 1) }
+          : { provider: "", modelId: e.model };
+      }
+      if (e.provider || e.modelId) {
+        return { provider: e.provider ?? "", modelId: e.modelId ?? "" };
+      }
     }
-    if (e.provider || e.modelId) return { provider: e.provider ?? "", modelId: e.modelId ?? "" };
+    if (!fallback && e.type === "message" && e.message.role === "assistant") {
+      const { provider, model } = e.message;
+      if (provider && model) fallback = { provider, modelId: model };
+    }
+    currentId = e.parentId;
   }
-  return null;
+  return fallback;
 }
 
 export function buildSessionContext(
@@ -643,10 +670,12 @@ export function buildSessionContext(
     if (m) { messages.push(m); entryIds.push(entry.id); }
   }
 
+  const effectiveLeafId = leafId !== undefined ? leafId : entries[entries.length - 1]?.id ?? null;
+
   return {
     messages, entryIds,
     thinkingLevel: resolveThinkingLevel(contextEntries),
-    model: resolveModel(contextEntries),
+    model: resolveModel(effectiveLeafId, byId),
   };
 }
 
