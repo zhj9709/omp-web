@@ -1440,6 +1440,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         commitAgentPhase(null);
         setRetryInfo(null);
         dispatch({ type: "end" });
+        // OMP marks the final agent_end of a turn with isTerminal=true (omitted
+        // or false means more turns follow: retry, compaction, queued follow-up).
+        // mirror the same flag the server uses to fire prompt_done, so the Stop
+        // button drops the moment the answer is on screen instead of waiting for
+        // an agent_settled that may arrive seconds later (or never, if the SSE
+        // stream is torn down by the idle grace window).
+        const isAgentEndTerminal = (event as { isTerminal?: unknown }).isTerminal !== false;
+        if (isAgentEndTerminal && (sdkAgentActiveRef.current || rpcPromptPendingRef.current)) {
+          sdkAgentActiveRef.current = false;
+          settleUiStage();
+        }
         if (sessionIdRef.current) {
           // A full session reload replaces every rendered message with the
           // defer-thinking variant, flipping layouts (inline thinking ->
