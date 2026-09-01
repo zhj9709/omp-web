@@ -320,6 +320,27 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
   return pathCache.get(sessionId) ?? null;
 }
 
+/**
+ * Resolve the working directory for an existing session. OMP RPC spawns its
+ * child process with this cwd, so it must match what the session file records —
+ * otherwise the agent runs in the wrong project directory (e.g. the server's
+ * own cwd, which happens to be the first project in the sidebar).
+ */
+export async function resolveSessionCwd(sessionId: string): Promise<string | null> {
+  const filePath = await resolveSessionPath(sessionId);
+  if (!filePath) return null;
+  try {
+    const [titleLine, headerLine] = readFileLines(filePath, 2);
+    void titleLine;
+    if (headerLine && headerLine.type === "session" && typeof headerLine.cwd === "string") {
+      return headerLine.cwd;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveSessionIdByPath(filePath: string): Promise<string | undefined> {
   const pathKey = sessionPathKey(filePath);
   const cached = getPathToIdCache().get(pathKey);

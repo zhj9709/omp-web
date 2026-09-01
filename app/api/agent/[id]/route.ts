@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveSessionPath } from "@/lib/session-reader";
+import { resolveSessionPath, resolveSessionCwd } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, CapabilityUnavailableError } from "@/lib/rpc-manager";
 
 // POST /api/agent/[id] - Send a command to an existing session
@@ -33,7 +33,8 @@ export async function POST(
       }, { status: 404 });
     }
 
-    const { session } = await startRpcSession(id, filePath, undefined);
+    const sessionCwd = await resolveSessionCwd(id);
+    const { session } = await startRpcSession(id, filePath, sessionCwd ?? undefined);
     const result = await session.send(body);
     promptAccepted = body.type === "prompt";
 
