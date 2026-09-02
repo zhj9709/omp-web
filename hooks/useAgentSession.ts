@@ -380,7 +380,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
   } = opts;
 
-  const isNew = session === null && newSessionCwd !== null;
+  // isNew must reflect an *explicit* draft intent from above, not just the
+  // shape of props. AppShell sets newSessionDraftKey in exactly the paths
+  // that create a draft: handleNewSession (button / Cmd+Alt+N / slash /
+  // initial ?cwd= restore). Selecting an existing session, deleting the
+  // current session, switching project, or restoring from URL — all of those
+  // either pass session !== null, or pass newSessionDraftKey === null.
+  // Without this gate, any transient window where session flips to null while
+  // newSessionCwd still carries the old project's cwd (handleCwdChange, async
+  // restoreWorkspaceContext, list refetch that nulls then rehydrates, etc.)
+  // would silently route the next prompt into a freshly-spawned session via
+  // ensureNewSession(), losing the conversation the user thought they were
+  // continuing in.
+  const isNew = session === null && newSessionCwd !== null && newSessionDraftKey !== null;
 
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(!isNew);
@@ -2609,7 +2621,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         scrollUserMsgToTop();
       } else if (!initialScrollDoneRef.current) {
         initialScrollDoneRef.current = true;
-        scrollToBottom("instant");
+        scrollToBottom("auto");
       } else if (isNearBottomRef.current) {
         // Follow new messages while the agent is running too: the tail-tracking
         // ref already encodes "user is at the bottom", so appends (queue
