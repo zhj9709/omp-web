@@ -685,7 +685,14 @@ export function AppShell() {
     invalidateWorkspaceRestore();
     activeNewSessionDraftKeyRef.current = null;
     setNewSessionCwd(null);
-    setSelectedSession(session);
+    // A transient session has no projectKey/projectRoot, so the sidebar's
+    // project filter would drop it. Stamp it with the active project identity
+    // so it passes the filter and appears immediately.
+    const activeProjectKey = activeProjectKeyRef.current;
+    const enrichedSession = activeProjectKey
+      ? { ...session, projectKey: activeProjectKey, projectRoot: session.cwd }
+      : session;
+    setSelectedSession(enrichedSession);
     hydrateSelectedSession(session.id);
     router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     // OMP writes the session file asynchronously; the first list refresh can
@@ -969,6 +976,7 @@ export function AppShell() {
     <>
       <SessionSidebar
         selectedSessionId={selectedSession?.id ?? null}
+        selectedSession={selectedSession}
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
         initialSessionId={initialSessionId}

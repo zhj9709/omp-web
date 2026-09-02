@@ -6,7 +6,7 @@ import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getProjectActivity, getRecentProjects, sessionsForProject, type RecentProject } from "@/lib/project-groups";
-import { addClosedProjectKey, loadClosedProjectKeys, removeClosedProjectKey } from "./closed-projects";
+import type { PinnedProject } from "@/lib/pinned-projects";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -81,6 +81,10 @@ function ToolbarIconButton({
 
 interface Props {
   selectedSessionId: string | null;
+  /** The full selected session object, including transient sessions that have
+   *  not yet been written to disk. Passed so new sessions can appear in the
+   *  sidebar the moment the user sends their first message. */
+  selectedSession?: SessionInfo | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
   onNewSession?: (sessionId: string, cwd: string) => void;
   initialSessionId?: string | null;
@@ -393,7 +397,7 @@ function OmpWebTitle() {
   );
 }
 
-export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange }: Props) {
+export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -402,7 +406,11 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   const [homeDir, setHomeDir] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
-  const [closedProjectKeys, setClosedProjectKeys] = useState<Set<string>>(() => new Set(loadClosedProjectKeys()));
+  // Pinned projects: server-persisted, survives reloads and crosses browser
+  // profiles. The sidebar merges these with any auto-detected projects so the
+  // user's explicit "open projects" list is honored everywhere.
+  const [pinnedProjects, setPinnedProjects] = useState<PinnedProject[]>([]);
+  const [pinnedLoaded, setPinnedLoaded] = useState(false);
   const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; project: RecentProject } | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const [wtFilter, setWtFilter] = useState("");
@@ -477,12 +485,75 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     }
   }, []);
 
+  // A brand-new session may not be on disk yet when the sidebar next polls
+  // /api/sessions, so it would be absent from the list until the run ends.
+  // Merge the selected session into the list optimistically so it appears the
+  // moment the user sends their first message.
+  useEffect(() => {
+    if (!selectedSession) return;
+    setAllSessions((prev) => {
+      if (prev.some((s) => s.id === selectedSession.id)) return prev;
+      return [...prev, selectedSession];
+    });
+  }, [selectedSession]);
+
   const initialLoadDone = useRef(false);
   useEffect(() => {
     const isFirst = !initialLoadDone.current;
     initialLoadDone.current = true;
     loadSessions(isFirst, !isFirst);
   }, [loadSessions, refreshKey]);
+
+  // Load pinned projects from the server once. They are independent of the
+  // sessions list, so fetching them separately avoids blocking sidebar render
+  // on cold start.
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/preferences/pinned-projects", { cache: "no-store" })
+      .then(async (r) => (r.ok ? (await r.json()) as { projects: PinnedProject[] } : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        setPinnedProjects(Array.isArray(d.projects) ? d.projects : []);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setPinnedLoaded(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const pinProject = useCallback(async (key: string, root: string) => {
+    let next: PinnedProject[] = [];
+    setPinnedProjects((prev) => {
+      next = prev.filter((p) => p.key !== key);
+      next.push({ key, root, lastOpenedAt: new Date().toISOString() });
+      return next;
+    });
+    try {
+      await fetch("/api/preferences/pinned-projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pin", key, root }),
+      });
+    } catch (err) {
+      console.error("[omp-web] failed to pin project:", err);
+    }
+  }, []);
+
+  const unpinProject = useCallback(async (key: string) => {
+    let next: PinnedProject[] = [];
+    setPinnedProjects((prev) => {
+      next = prev.filter((p) => p.key !== key);
+      return next;
+    });
+    try {
+      await fetch("/api/preferences/pinned-projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "unpin", key }),
+      });
+    } catch (err) {
+      console.error("[omp-web] failed to unpin project:", err);
+    }
+  }, []);
 
   // Browser storage is unavailable during server rendering. Restore the panel
   // preference after hydration so a collapsed explorer stays collapsed on reload.
@@ -702,27 +773,36 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     return () => { cancelled = true; };
   }, [selectedCwd, wtRefreshKey, refreshKey]);
 
-  // Projects the user closed are hidden from the picker until re-opened via
-  // a custom path (or the underlying sessions are gone, since keys are stable).
-  const recentProjects = useMemo(
-    () => getRecentProjects(allSessions).filter((project) => !closedProjectKeys.has(project.key)),
-    [allSessions, closedProjectKeys],
-  );
+  // Pinned projects (server-persisted, cross-browser) take priority: they are
+  // the projects the user explicitly wants in their sidebar. Detected projects
+  // from sessions fill in any pinned entries the server doesn't know about
+  // yet (e.g. a brand-new session whose cwd has never been pinned).
+  const recentProjects = useMemo(() => {
+    const detected = getRecentProjects(allSessions);
+    const detectedByKey = new Map(detected.map((p) => [p.key, p]));
+    const merged: RecentProject[] = [];
+    const seen = new Set<string>();
+    for (const p of pinnedProjects) {
+      const detectedForKey = detectedByKey.get(p.key);
+      merged.push({ key: p.key, root: detectedForKey?.root ?? p.root });
+      seen.add(p.key);
+    }
+    for (const p of detected) {
+      if (seen.has(p.key)) continue;
+      merged.push(p);
+    }
+    return merged;
+  }, [allSessions, pinnedProjects]);
 
   // Auto-select cwd and restore session from URL on first load
   const didAutoSelectRef = useRef(false);
   useEffect(() => {
     if (allSessions.length === 0 || skipInitialProjectSelection) return;
-    if (selectedCwd !== null) {
-      didAutoSelectRef.current = true;
-      return;
-    }
-    // A null selection set by closing the selected project must NOT re-trigger
-    // the auto-select below — that would yank the user into the next project.
-    if (didAutoSelectRef.current) return;
-    didAutoSelectRef.current = true;
-
-    // If restoring a session, set cwd to match that session
+    // URL session restore must take priority over the auto-selected cwd. The
+    // initial cwd may already be set from the most-recent project before the
+    // sidebar has loaded its session list; skipping on that condition meant
+    // ?session=<id> URLs never re-opened their target session, leaving the
+    // chat area blank with only the sidebar preview of the conversation.
     if (initialSessionId && !restoredRef.current) {
       restoredRef.current = true;
       const target = allSessions.find((s) => s.id === initialSessionId);
@@ -734,6 +814,14 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       // Session not found — notify parent so it can show the placeholder
       onInitialRestoreDone?.();
     }
+    if (selectedCwd !== null) {
+      didAutoSelectRef.current = true;
+      return;
+    }
+    // A null selection set by closing the selected project must NOT re-trigger
+    // the auto-select below — that would yank the user into the next project.
+    if (didAutoSelectRef.current) return;
+    didAutoSelectRef.current = true;
     if (recentProjects.length > 0) setSelectedCwd(recentProjects[0].root);
   }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, recentProjects]);
 
@@ -771,8 +859,6 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         setCustomPathError(data.error ?? `HTTP ${res.status}`);
         return;
       }
-      // Opening a path inside a closed project re-opens it in the picker.
-      setClosedProjectKeys((prev) => removeClosedProjectKey(prev, data.projectKey!));
       setValidatedProject({
         cwd: data.cwd,
         root: data.projectRoot,
@@ -812,12 +898,12 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
 
   const handleCloseProject = useCallback((project: RecentProject) => {
     setProjectContextMenu(null);
-    setClosedProjectKeys((prev) => addClosedProjectKey(prev, project.key));
+    void unpinProject(project.key);
     // Closing the project that is currently selected drops the selection so
     // the parent falls back to the "no workspace" placeholder. The list stays
     // open so several projects can be closed in a row.
     if (projectFor(selectedCwd)?.key === project.key) setSelectedCwd(null);
-  }, [projectFor, selectedCwd]);
+  }, [projectFor, selectedCwd, unpinProject]);
 
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
@@ -948,6 +1034,22 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
 
   // Sessions of every worktree in the selected project are shown together
   const selectedProject = projectFor(selectedCwd);
+
+  // Auto-pin the active project on first hydration of pinned storage, and
+  // bump lastOpenedAt on every visit. Visiting a project is the strongest
+  // signal the user wants it in their sidebar across browsers.
+  useEffect(() => {
+    if (!pinnedLoaded || !selectedProject) return;
+    const already = pinnedProjects.find((p) => p.key === selectedProject.key);
+    const needsRefresh = !already
+      || already.root !== selectedProject.root;
+    if (needsRefresh) {
+      void pinProject(selectedProject.key, selectedProject.root);
+    }
+    // Track identity fields rather than the whole selectedProject reference so
+    // we do not fire on every projectFor recomputation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinnedLoaded, selectedProject?.key, selectedProject?.root, pinProject, pinnedProjects]);
 
   // Per-project activity counts (running / unread) for the workspace selector.
   // Uses the same stable server key as the project list and filtering.
@@ -1324,7 +1426,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
                 left: projectContextMenu.x,
                 top: projectContextMenu.y,
                 zIndex: 1000,
-                minWidth: 140,
+                minWidth: 160,
                 background: "var(--bg-panel, var(--bg))",
                 border: "1px solid var(--border)",
                 borderRadius: 8,
