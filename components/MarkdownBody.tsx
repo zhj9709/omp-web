@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, type MouseEvent } from "react";
+import { memo, useDeferredValue, useMemo, type MouseEvent } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { encodeFilePathForApi } from "@/lib/file-paths";
@@ -16,7 +16,7 @@ interface MarkdownBodyProps {
 }
 
 export const MarkdownBody = memo(function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
-  const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
+  const deferredChildren = useDeferredValue(children);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
     code({ className, children, ...props }) {
@@ -87,7 +87,7 @@ export const MarkdownBody = memo(function MarkdownBody({ children, className, is
       );
     },
   }), [cwd, isStreaming, onOpenFile]);
-
+  const normalizedMarkdown = useMemo(() => normalizeDisplayMath(deferredChildren), [deferredChildren]);
   const rehypePlugins = markdownMayContainMath(normalizedMarkdown)
     ? markdownRehypePlugins
     : markdownPlainRehypePlugins;

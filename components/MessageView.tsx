@@ -1,9 +1,10 @@
 "use client";
 
-import { memo, useState, useRef, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useEffect, useMemo, forwardRef } from "react";
 import { MarkdownBody } from "./MarkdownBody";
 import { ImagePreview } from "./ImagePreview";
 import { copyText } from "@/lib/clipboard";
+import { useResolvedImageSrc } from "@/hooks/useBlobImage";
 import { useI18n } from "@/hooks/useI18n";
 import { useTypewriterText } from "@/hooks/useTypewriterText";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
@@ -256,31 +257,7 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props) {
-  if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
-  }
-  if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} writtenFiles={writtenFiles} />;
-  }
-  if (message.role === "toolResult") {
-    // Rendered inline under its toolCall — skip standalone rendering if paired
-    return null;
-  }
-  if (message.role === "custom") {
-    if ((message as CustomMessage).customType === "compaction") {
-      return <CompactionMessageView message={message as CustomMessage} />;
-    }
-    if ((message as CustomMessage).customType === "commandOutput") {
-      return <CommandOutputMessageView message={message as CustomMessage} />;
-    }
-    return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
-  }
-  if (message.role === "bashExecution") {
-    return <BashExecutionView message={message as BashExecutionMessage} sessionId={sessionId} />;
-  }
-  return null;
-}, (prev, next) => {
+function messageViewPropsEqual(prev: Props & { ref?: React.Ref<HTMLDivElement> }, next: Props & { ref?: React.Ref<HTMLDivElement> }): boolean {
   return prev.message === next.message
     && prev.isStreaming === next.isStreaming
     && haveSameRelevantToolResults(prev.message, prev.toolResults, next.toolResults)
@@ -296,9 +273,37 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.sessionId === next.sessionId;
+}
+
+const MessageViewInner = forwardRef<HTMLDivElement, Props>(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props, ref) {
+  if (message.role === "user") {
+    return <UserMessageView ref={ref} message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} sessionId={sessionId} />;
+  }
+  if (message.role === "assistant") {
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} writtenFiles={writtenFiles} />;
+  }
+  if (message.role === "toolResult") {
+    // Rendered inline under its toolCall — skip standalone rendering if paired
+    return null;
+  }
+  if (message.role === "custom") {
+    if ((message as CustomMessage).customType === "compaction") {
+      return <CompactionMessageView message={message as CustomMessage} />;
+    }
+    if ((message as CustomMessage).customType === "commandOutput") {
+      return <CommandOutputMessageView message={message as CustomMessage} />;
+    }
+    return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} />;
+  }
+  if (message.role === "bashExecution") {
+    return <BashExecutionView message={message as BashExecutionMessage} sessionId={sessionId} />;
+  }
+  return null;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent }: {
+export const MessageView = memo(MessageViewInner, messageViewPropsEqual);
+
+const UserMessageView = forwardRef<HTMLDivElement, {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -308,7 +313,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   onNavigate?: (entryId: string) => void;
   prevAssistantEntryId?: string;
   onEditContent?: (message: UserMessage) => void;
-}) {
+  sessionId?: string;
+}>(function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, sessionId }, ref) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -343,28 +349,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
 
   const imageBlocksNode = imageBlocks.length > 0 && (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}>
-      {imageBlocks.map((img, i) => {
-        // lib/types.ts ImageContent uses {source:{type,data,media_type,url}}
-        // pi-ai on-disk format uses flat {data, mimeType} — handle both
-        const flat = img as unknown as { data?: string; mimeType?: string };
-        const src = img.source
-          ? img.source.type === "base64"
-            ? `data:${img.source.media_type};base64,${img.source.data}`
-            : img.source.url ?? ""
-          : flat.data
-            ? `data:${flat.mimeType};base64,${flat.data}`
-            : "";
-        return (
-          <ImagePreview key={i} src={src}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={src}
-              alt=""
-              style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid color-mix(in srgb, var(--accent) 15%, transparent)" }}
-            />
-          </ImagePreview>
-        );
-      })}
+      {imageBlocks.map((img, i) => (
+        <ImageBlock key={i} image={img} sessionId={sessionId} entryId={entryId} />
+      ))}
     </div>
   );
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
@@ -378,6 +365,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
 
   return (
     <div
+      ref={ref}
       style={{ marginBottom: 16, display: "flex", flexDirection: "column", alignItems: "flex-end" }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -578,7 +566,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
       )}
     </div>
   );
-}
+});
 
 function AssistantMessageView({
   message,
@@ -902,31 +890,13 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
 }
 
 function TextBlock({ block, isStreaming, cwd, onOpenFile }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string) => void }) {
-  // While the assistant is still streaming, render plain text with preserved
-  // whitespace. Running react-markdown + KaTeX + syntax highlighting on every
-  // token frame re-parses the full message and freezes the main thread on long
-  // replies. Markdown rendering is deferred until the stream completes.
-  //
-  // The typewriter buffer additionally smooths the display: raw deltas arrive
-  // in uneven bursts, and revealing them one step per animation frame reads
-  // as a continuous character stream instead of per-chunk jumps.
+  // The typewriter smooths the raw SSE delta bursts into a steady character
+  // reveal. MarkdownBody now uses useDeferredValue so the react-markdown parse
+  // is also coalesced — the full tree re-renders only when React catches up,
+  // not on every animation-frame delta. Progressive markdown rendering (bold,
+  // headers, links) now appears during the stream instead of only at the end.
   const displayText = useTypewriterText(block.text, Boolean(isStreaming));
-  if (isStreaming) {
-    return (
-      <div
-        style={{
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          overflowWrap: "anywhere",
-          minWidth: 0,
-          maxWidth: "100%",
-        }}
-      >
-        {displayText}
-      </div>
-    );
-  }
-  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile}>{block.text}</SafeMarkdownBody>;
+  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile}>{displayText}</SafeMarkdownBody>;
 }
 
 function ThinkingBlock({ block, isStreaming, duration, sessionId, entryId, blockIndex }: {
@@ -1602,7 +1572,7 @@ function CompactionFileList({ title, files }: { title: string; files: string[] }
   );
 }
 
-function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string) => void }) {
+function CustomMessageView({ message, cwd, onOpenFile, sessionId, entryId }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string) => void; sessionId?: string; entryId?: string }) {
   const { t } = useI18n();
   const isHiddenDisplay = message.display === false;
   const [contentExpanded, setContentExpanded] = useState(!isHiddenDisplay);
@@ -1656,20 +1626,9 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           <div style={{ padding: "6px 9px" }}>
             {images.length > 0 && (
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: text ? 8 : 0 }}>
-                {images.map((img, i) => {
-                  const src = imageSource(img);
-                  if (!src) return null;
-                  return (
-                    <ImagePreview key={i} src={src}>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={src}
-                        alt=""
-                        style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid var(--border)" }}
-                      />
-                    </ImagePreview>
-                  );
-                })}
+                {images.map((img, i) => (
+                  <ImageBlock key={i} image={img} sessionId={sessionId} entryId={entryId} />
+                ))}
               </div>
             )}
              {text ? <MarkdownBody className="markdown-custom-message" cwd={cwd} onOpenFile={onOpenFile}>{text}</MarkdownBody> : <span style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("i18n.noMessage")}</span>}
@@ -1782,11 +1741,24 @@ function getMessageImages(content: CustomMessage["content"] | UserMessage["conte
 function imageSource(img: ImageContent): string {
   const flat = img as unknown as { data?: string; mimeType?: string };
   if (img.source) {
-    return img.source.type === "base64"
-      ? `data:${img.source.media_type};base64,${img.source.data}`
-      : img.source.url ?? "";
+    if (img.source.type === "base64") {
+      // OMP may rewrite the base64 payload to a `blob:sha256:` reference when
+      // persisting the session; hand the bare reference to useResolvedImageSrc
+      // so it can fetch the bytes via the blob API rather than producing a
+      // malformed `data:…;base64,blob:sha256:…` URL.
+      const ref = img.source.data ?? "";
+      if (ref.startsWith("blob:sha256:")) return ref;
+      return `data:${img.source.media_type};base64,${ref}`;
+    }
+    return img.source.url ?? "";
   }
-  return flat.data ? `data:${flat.mimeType};base64,${flat.data}` : "";
+  if (flat.data) {
+    // Same rewriting can hit the flat `{ type, data, mimeType }` shape that
+    // older pi-ai entries used; treat the blob reference as opaque here too.
+    if (flat.data.startsWith("blob:sha256:")) return flat.data;
+    return `data:${flat.mimeType};base64,${flat.data}`;
+  }
+  return "";
 }
 
 function safeJson(value: unknown): string {
@@ -1985,6 +1957,32 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
           {fullError && <span style={{ marginLeft: 6, color: "var(--text-dim)", fontSize: 11 }}>({fullError})</span>}
         </div>
       )}
+
+
     </div>
   );
 }
+
+function ImageBlock({ image, sessionId, entryId, maxWidth = 240, maxHeight = 240, borderColor = "color-mix(in srgb, var(--accent) 15%, transparent)" }: {
+  image: ImageContent;
+  sessionId?: string;
+  entryId?: string;
+  maxWidth?: number;
+  maxHeight?: number;
+  borderColor?: string;
+}) {
+  const rawSrc = imageSource(image);
+  const resolvedSrc = useResolvedImageSrc(rawSrc, { sessionId, entryId });
+  if (!resolvedSrc) return null;
+  return (
+    <ImagePreview src={resolvedSrc}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={resolvedSrc}
+        alt=""
+        style={{ maxWidth, maxHeight, borderRadius: 6, objectFit: "contain", display: "block", border: `1px solid ${borderColor}` }}
+      />
+    </ImagePreview>
+  );
+}
+
