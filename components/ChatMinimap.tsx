@@ -310,7 +310,11 @@ export const ChatMinimap = memo(function ChatMinimap({
     if (!scrollEl) return;
     const scrollable = scrollEl.scrollHeight - scrollEl.clientHeight;
     const currentNodes = allNodesRef.current;
-    setVisible(scrollable > 20);
+    // Show the rail when there is meaningful scroll OR at least one turn was
+    // measured. Without the turn fallback, short sessions that fit entirely
+    // inside the viewport never show the minimap, even though the user asked
+    // for it to mirror the conversation.
+    setVisible(scrollable > 20 || currentNodes.length > 0);
     syncActiveNode(scrollEl, currentNodes);
   }, [scrollContainer, syncActiveNode]);
 
@@ -362,7 +366,11 @@ export const ChatMinimap = memo(function ChatMinimap({
       setMinimapHeight(minimapEl.clientHeight);
       allNodesRef.current = nextNodes;
       setAllNodes(nextNodes);
-      setVisible(scrollEl.scrollHeight - scrollEl.clientHeight > 20);
+      // Show the rail when there is meaningful scroll OR at least one turn was
+      // measured. Without the turn fallback, short sessions that fit entirely
+      // inside the viewport never show the minimap, even though the user asked
+      // for it to mirror the conversation.
+      setVisible(scrollEl.scrollHeight - scrollEl.clientHeight > 20 || nextNodes.length > 0);
       syncActiveNode(scrollEl, nextNodes);
 
       const pendingNavigation = pendingNavigationRef.current;
