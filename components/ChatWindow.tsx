@@ -250,6 +250,14 @@ function hasDisplayableProcessMessage(message: AgentMessage): boolean {
 // standalone and never collapses.
 function isGroupAnchor(message: AgentMessage): boolean {
   if (message.role === "user") return true;
+  // A compaction summary is itself rendered as a stand-alone card and must
+  // not be treated as a user anchor that swallows the following turn — when
+  // the pre-compaction transcript is expanded, the next user/assistant pair
+  // would otherwise be eaten by the compaction group and skipped.
+  return false;
+}
+
+function isCompactionMessage(message: AgentMessage): boolean {
   return message.role === "custom" && (message as CustomMessage).customType === "compaction";
 }
 

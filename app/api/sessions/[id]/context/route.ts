@@ -12,6 +12,7 @@ export async function GET(
   const leafId = url.searchParams.get("leafId") ?? undefined;
   const deferThinking = url.searchParams.has("deferThinking");
   const deferToolResultImages = url.searchParams.has("deferMedia");
+  const expandCompaction = url.searchParams.has("expandCompaction");
 
   try {
     const rpc = getRpcSession(id);
@@ -26,6 +27,7 @@ export async function GET(
     const context = buildSessionContext(entries as never, effectiveLeafId, {
       deferThinking,
       deferToolResultImages,
+      expandCompaction,
     });
 
     return NextResponse.json({ context });

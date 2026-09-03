@@ -47,7 +47,8 @@ export async function GET(
     const searchParams = new URL(req.url).searchParams;
     const deferThinking = searchParams.has("deferThinking");
     const deferToolResultImages = searchParams.has("deferMedia");
-    const context = buildSessionContext(entries as never, leafId, { deferThinking, deferToolResultImages });
+    const expandCompaction = searchParams.has("expandCompaction");
+    const context = buildSessionContext(entries as never, leafId, { deferThinking, deferToolResultImages, expandCompaction });
     const totalActiveMs = computeSessionTotalActiveMs(entries);
 
     // Context usage: live RPC sessions report it via get_state; cold sessions

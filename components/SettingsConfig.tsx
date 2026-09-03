@@ -6,6 +6,7 @@ import { SETTINGS_SCHEMA, SETTINGS_TABS, type SettingDef } from "@/lib/settings-
 import { SETTINGS_GROUPS_ZH, SETTINGS_ZH } from "@/lib/settings-i18n-zh";
 import { useI18n } from "@/hooks/useI18n";
 import { useChatWidthPct } from "@/lib/chat-width-preference";
+import { refreshSettings } from "@/hooks/useSettings";
 
 /* ------------------------------------------------------------------ */
 /* Dotted-path helpers                                                 */
@@ -411,6 +412,7 @@ export const SettingsConfig = memo(function SettingsConfig({ onClose }: { onClos
       setTimeout(() => setSavedOk(false), 2000);
       const fresh = await fetch("/api/config", { cache: "no-store" }).then((r) => r.json());
       setValues(fresh.values ?? {});
+      refreshSettings();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
     } finally {

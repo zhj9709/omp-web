@@ -16,6 +16,7 @@ import { normalizeToolCalls } from "@/lib/normalize";
 import { AgentCommandError, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
 import { clearDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
+import { useSetting, ensureSettingsLoaded } from "@/hooks/useSettings";
 import {
   DEFAULT_QUEUE_MODES,
   getPreferredQueueModes,
@@ -381,6 +382,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
   } = opts;
 
+  // display.collapseCompacted is true by default; when the user disables it,
+  // we ask the server for the full pre-compaction transcript. The hook
+  // re-renders after SettingsConfig calls refreshSettings(), so toggling the
+  // setting updates an already-mounted session live.
+  //
+  // `useSetting` returns `undefined` until the shared /api/config cache is
+  // populated. We use that signal to skip the very first loadSession call —
+  // it would otherwise ask the server for the collapsed transcript before we
+  // know whether the user opted into expansion, then a subsequent reload
+  // would silently replace the (correct) expanded messages with the
+  // (incorrect) collapsed ones.
+  const collapseCompacted = useSetting<boolean>("display.collapseCompacted");
+  const expandCompaction: boolean | undefined =
+    collapseCompacted === undefined ? undefined : collapseCompacted === false;
+
   // isNew must reflect an *explicit* draft intent from above, not just the
   // shape of props. AppShell sets newSessionDraftKey in exactly the paths
   // that create a draft: handleNewSession (button / Cmd+Alt+N / slash /
@@ -488,6 +504,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const sessionHookMountedRef = useRef(true);
   const pendingDeltasRef = useRef<ClientAssistantMessageEvent[]>([]);
   const deltaFrameRef = useRef<number | null>(null);
+  // Mirror of expandCompaction so loadSession / loadContext (which are wrapped
+  // in stable useCallbacks with many callers) always read the latest value
+  // without forcing a full deps rewrite.
+  const expandCompactionRef = useRef(expandCompaction);
+  expandCompactionRef.current = expandCompaction;
   // tool_execution_* events can arrive at high frequency (bash partial output
   // streams one progress event per chunk), and subagent_progress fires per
   // progress tick. Coalesce those updates into a single setState per animation
@@ -749,6 +770,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       if (showLoading) setLoading(true);
       const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
+      if (expandCompactionRef.current) params.set("expandCompaction", "1");
       const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}?${params}`);
       if (res.status === 404) {
         if (showLoading) {
@@ -848,6 +870,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
       if (leafId) params.set("leafId", leafId);
+      if (expandCompactionRef.current) params.set("expandCompaction", "1");
       const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2514,36 +2537,45 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sessionHookMountedRef.current = true;
     if (session) {
       sessionIdRef.current = session.id;
-      loadSession(session.id, true, true).then((agentState) => {
-        if (agentState?.running) {
-          loadTools(session.id);
-          if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
-            sdkAgentActiveRef.current = Boolean(agentState.state.isStreaming);
-            rpcPromptPendingRef.current = Boolean(agentState.state.isPromptRunning);
-            agentRunningRef.current = true;
-            setAgentRunning(true);
-            commitAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
-            dispatch({ type: "start" });
-            void maintainEventsConnected(session.id);
-            if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
-              void waitForPromptSettlement(session.id);
+      // Defer the first loadSession until the settings cache is populated.
+      // Otherwise loadSession reads expandCompactionRef as `undefined` (i.e.
+      // "treat as collapsed"), pulls the folded transcript, and a later
+      // effect-driven reload overwrites it with the unfolded one — a flash
+      // of collapsed content followed by the correct view.
+      void ensureSettingsLoaded().then(() => {
+        if (!sessionHookMountedRef.current) return;
+        if (sessionIdRef.current !== session.id) return;
+        loadSession(session.id, true, true).then((agentState) => {
+          if (agentState?.running) {
+            loadTools(session.id);
+            if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
+              sdkAgentActiveRef.current = Boolean(agentState.state.isStreaming);
+              rpcPromptPendingRef.current = Boolean(agentState.state.isPromptRunning);
+              agentRunningRef.current = true;
+              setAgentRunning(true);
+              commitAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
+              dispatch({ type: "start" });
+              void maintainEventsConnected(session.id);
+              if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
+                void waitForPromptSettlement(session.id);
+              }
+            }
+            if (agentState.state?.isBashRunning) {
+              bashRunningRef.current = true;
+              setBashRunning(true);
+              void waitForBashSettlement(session.id);
             }
           }
-          if (agentState.state?.isBashRunning) {
-            bashRunningRef.current = true;
-            setBashRunning(true);
-            void waitForBashSettlement(session.id);
+          if (agentState?.state) {
+            if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
+            if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
+            if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
+            if (agentState.state.thinkingLevel !== undefined) setThinkingLevel((agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto");
+            // extensionStatuses/extensionWidgets omitted: snapshots always
+            // report empty arrays; SSE events are the only source.
+            if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
           }
-        }
-        if (agentState?.state) {
-          if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
-          if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
-          if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
-          if (agentState.state.thinkingLevel !== undefined) setThinkingLevel((agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto");
-          // extensionStatuses/extensionWidgets omitted: snapshots always
-          // report empty arrays; SSE events are the only source.
-          if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
-        }
+        });
       });
     }
     return () => {
@@ -2669,6 +2701,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     setSessionStatsOverride(null);
   }, [messages.length, contextUsage?.tokens, contextUsage?.percent, contextUsage?.contextWindow]);
+
+  // When display.collapseCompacted changes after a session is already loaded,
+  // refetch the session (and any cached context leaf) so the toggle takes
+  // effect without a page reload. Skip while the settings cache is still
+  // loading — that race could otherwise replace the correct expanded
+  // transcript with the collapsed one before useSetting settles.
+  useEffect(() => {
+    if (expandCompaction === undefined) return;
+    const sid = session?.id;
+    if (!sid) return;
+    if (isNew) return;
+    void loadSession(sid, false, false, promptRunIdRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandCompaction]);
 
   return {
     // State

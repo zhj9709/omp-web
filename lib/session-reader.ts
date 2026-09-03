@@ -602,6 +602,7 @@ function walkContextPath(
   entries: SessionEntry[],
   leafId: string | null | undefined,
   byId: Map<string, SessionEntry>,
+  options: { expandCompaction?: boolean } = {},
 ): SessionEntry[] {
   if (leafId === null) return [];
 
@@ -648,17 +649,20 @@ function walkContextPath(
 
   // Kept suffix: from the compaction's parentId back to firstKeptEntryId
   // (inclusive), following the parent chain. Entries before this boundary
-  // were folded into the compaction summary and must not be replayed.
+  // were folded into the compaction summary and must not be replayed when
+  // collapse mode is on. When expandCompaction is requested, keep the entire
+  // chain so the pre-summary transcript stays visible alongside the summary.
   const keptSuffix: SessionEntry[] = [];
   {
     let id: string | null = compaction.parentId;
     const keptVisited = new Set<string>();
+    const stopId = options.expandCompaction ? null : firstKeptId;
     while (id && !keptVisited.has(id) && keptSuffix.length < MAX_DEPTH) {
       keptVisited.add(id);
       const entry = byId.get(id);
       if (!entry) break;
       keptSuffix.push(entry);
-      if (id === firstKeptId) break;
+      if (stopId && id === stopId) break;
       id = entry.parentId;
     }
     keptSuffix.reverse();
@@ -723,12 +727,14 @@ function resolveModel(
 export function buildSessionContext(
   entries: SessionEntry[],
   leafId?: string | null,
-  options: { deferThinking?: boolean; deferToolResultImages?: boolean } = {},
+  options: { deferThinking?: boolean; deferToolResultImages?: boolean; expandCompaction?: boolean } = {},
 ): SessionContext {
   const byId = new Map<string, SessionEntry>();
   for (const e of entries) byId.set(e.id, e);
 
-  const contextEntries = walkContextPath(entries, leafId, byId);
+  const contextEntries = walkContextPath(entries, leafId, byId, {
+    expandCompaction: options.expandCompaction,
+  });
 
   const messages: AgentMessage[] = [];
   const entryIds: string[] = [];
