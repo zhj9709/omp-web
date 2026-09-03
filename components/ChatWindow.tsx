@@ -657,6 +657,16 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
+
+  // Autofocus the composer when a brand-new session mounts. Tracks the empty
+  // state (no messages, not streaming, not busy) so the focus follows the user
+  // when they reset to a new session via the sidebar — not just on initial load.
+  // One-shot per transition: the effect re-runs only when isEmptyNew flips back
+  // to false (e.g. first message sent), then true again (next new session).
+  useEffect(() => {
+    if (!isEmptyNew) return;
+    chatInputRef?.current?.focus();
+  }, [isEmptyNew, chatInputRef]);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const messageContentRef = useRef<HTMLDivElement | null>(null);
   const promptAnchorSpacerRef = useRef<HTMLDivElement | null>(null);
