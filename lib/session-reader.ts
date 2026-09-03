@@ -671,7 +671,14 @@ function walkContextPath(
   // Entries after the compaction (toward the leaf), in chronological order.
   const afterCompaction = chain.slice(0, compactionIndex).reverse();
 
-  return [compaction, ...keptSuffix, ...afterCompaction];
+  // Place the compaction card immediately after the entry that triggered it
+  // (compaction.parentId). In collapse mode keptSuffix holds only the small
+  // post-compression context, so the card sits just before the user prompt
+  // that the agent was working on when compression kicked in. In expand mode
+  // keptSuffix is the full pre-summary transcript, so the card sits at the
+  // end of the original conversation — i.e. "this is where compaction
+  // happened" rather than "this is what was kept".
+  return [...keptSuffix, compaction, ...afterCompaction];
 }
 
 function resolveThinkingLevel(pathEntries: SessionEntry[]): string {
