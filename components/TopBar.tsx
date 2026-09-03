@@ -461,6 +461,7 @@ export function TopBar({
 
     let contextColor = "var(--text-muted)";
     let desktopContextText: string | null = null;
+    let desktopCacheHitText: string | null = null;
     let mobileContextText: string | null = null;
     if (contextUsage?.contextWindow) {
       const percent = contextUsage.percent;
@@ -470,6 +471,10 @@ export function TopBar({
         ? `${formatCompact(contextUsage.tokens)} / ${formatCompact(contextUsage.contextWindow)}`
         : `? / ${formatCompact(contextUsage.contextWindow)}`;
       mobileContextText = percent !== null ? `${percent.toFixed(0)}%` : null;
+    }
+    if (tokens && tokens.cacheRead > 0 && tokens.input > 0) {
+      const cacheHitRate = (tokens.cacheRead / (tokens.input + tokens.cacheRead)) * 100;
+      desktopCacheHitText = `${cacheHitRate.toFixed(0)}%`;
     }
 
     const tooltipParts: string[] = [];
@@ -601,6 +606,15 @@ export function TopBar({
                   <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
                 </svg>
                 {desktopContextText}
+              </span>
+            )}
+            {desktopCacheHitText && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
+                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <ellipse cx="5" cy="3" rx="3.5" ry="1.5" />
+                  <path d="M1.5 3v4c0 .83 1.57 1.5 3.5 1.5s3.5-.67 3.5-1.5V3" />
+                </svg>
+                {desktopCacheHitText}
               </span>
             )}
           </>
