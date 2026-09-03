@@ -2843,47 +2843,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
               </div>
             )}
 
-            {!isStreaming && onCompact && (
-              <div style={{ display: isMobile ? undefined : "none" }}>
-                <button
-                  onClick={isCompacting ? onAbortCompaction : onCompact}
-                  disabled={isStreaming && !isCompacting}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
-                    width: isMobile ? "auto" : undefined,
-                    height: 32,
-                    background: isCompacting ? "var(--error-bg)" : "none",
-                    border: "none",
-                    borderRadius: 9,
-                    color: isCompacting ? "var(--error)" : "var(--text-muted)",
-                    cursor: (isStreaming && !isCompacting) ? "not-allowed" : "pointer",
-                    fontSize: 12, opacity: (isStreaming && !isCompacting) ? 0.5 : 1,
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (isStreaming && !isCompacting) return;
-                    e.currentTarget.style.background = isCompacting ? "var(--error-bg)" : "var(--bg-hover)";
-                    e.currentTarget.style.color = isCompacting ? "var(--error)" : "var(--text)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = isCompacting ? "var(--error-bg)" : "none";
-                    e.currentTarget.style.color = isCompacting ? "var(--error)" : "var(--text-muted)";
-                  }}
-                   title={isCompacting ? t("chat.stopCompaction") : t("chat.compactContext")}
-                   aria-label={isCompacting ? t("chat.stopCompaction") : t("chat.compactContext")}
-                >
-                  {isCompacting ? (
-                    <><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg>{(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{t("chat.compacting")}</span>}</>
-                  ) : (
-                    <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
-                      <line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" />
-                    </svg>{(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{t("chat.compact")}</span>}</>
-                  )}
-                </button>
-              </div>
-            )}
             {!isStreaming && onHandoff && (
               <div style={{ display: isMobile ? undefined : "none" }}>
                 <button
@@ -2995,6 +2954,46 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                     <line x1="23" y1="9" x2="17" y2="15" />
                     <line x1="17" y1="9" x2="23" y2="15" />
                   </svg>
+                )}
+              </button>
+            )}
+            {/* Compact button — desktop only, sits next to the overflow menu so
+                secondary actions (sound → compact → ⋯) cluster at the right. */}
+            {!isMobile && !isStreaming && onCompact && (
+              <button
+                onClick={isCompacting ? onAbortCompaction : onCompact}
+                disabled={isStreaming && !isCompacting}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                  padding: "8px 12px",
+                  height: 32,
+                  background: isCompacting ? "var(--error-bg)" : "none",
+                  border: "none",
+                  borderRadius: 9,
+                  color: isCompacting ? "var(--error)" : "var(--text-muted)",
+                  cursor: (isStreaming && !isCompacting) ? "not-allowed" : "pointer",
+                  fontSize: 12, opacity: (isStreaming && !isCompacting) ? 0.5 : 1,
+                  transition: "background 0.12s, color 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  if (isStreaming && !isCompacting) return;
+                  e.currentTarget.style.background = isCompacting ? "var(--error-bg)" : "var(--bg-hover)";
+                  e.currentTarget.style.color = isCompacting ? "var(--error)" : "var(--text)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isCompacting ? "var(--error-bg)" : "none";
+                  e.currentTarget.style.color = isCompacting ? "var(--error)" : "var(--text-muted)";
+                }}
+                title={isCompacting ? t("chat.stopCompaction") : t("chat.compactContext")}
+                aria-label={isCompacting ? t("chat.stopCompaction") : t("chat.compactContext")}
+              >
+                {isCompacting ? (
+                  <><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg><span style={{ whiteSpace: "nowrap" }}>{t("chat.compacting")}</span></>
+                ) : (
+                  <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
+                    <line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" />
+                  </svg><span style={{ whiteSpace: "nowrap" }}>{t("chat.compact")}</span></>
                 )}
               </button>
             )}
@@ -3170,34 +3169,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                             </div>
                           )}
                         </div>
-                      )}
-                      {/* Compact */}
-                      {!isStreaming && onCompact && (
-                        <button
-                          type="button"
-                          onClick={() => { setMoreMenuOpen(false); setMoreSubmenu(null); if (isCompacting) { onAbortCompaction?.(); } else { onCompact(); } }}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 8,
-                            width: "100%", padding: "8px 12px",
-                            border: "none", borderRadius: 6,
-                            background: "none",
-                            color: "var(--text)",
-                            cursor: "pointer", textAlign: "left", fontSize: 12.5,
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-selected)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
-                        >
-                          {isCompacting ? (
-                            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" style={{ flexShrink: 0, color: "var(--text-muted)" }}><rect x="2" y="2" width="6" height="6" rx="1" /></svg>
-                          ) : (
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
-                              <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
-                              <line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" />
-                            </svg>
-                          )}
-                          <span style={{ flex: 1 }}>{t("chat.compact")}</span>
-                          {isCompacting && <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{t("chat.compacting")}</span>}
-                        </button>
                       )}
                       {/* Handoff */}
                       {!isStreaming && onHandoff && (
