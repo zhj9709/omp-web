@@ -15,6 +15,7 @@ import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
+import { computeColdContextUsage } from "@/lib/session-context-usage";
 import {
   buildSessionTree,
   computeLeafId,
@@ -49,6 +50,12 @@ export async function GET(
     const context = buildSessionContext(entries as never, leafId, { deferThinking, deferToolResultImages });
     const totalActiveMs = computeSessionTotalActiveMs(entries);
 
+    // Context usage: live RPC sessions report it via get_state; cold sessions
+    // reconstruct it from the session file tail. Null when unavailable.
+    const contextUsage = liveRpc
+      ? liveRpc.getContextUsage()
+      : await computeColdContextUsage(filePath);
+
     let modified = header?.timestamp ?? new Date().toISOString();
     try { modified = statSync(filePath).mtime.toISOString(); } catch { /* use header timestamp */ }
 
@@ -73,6 +80,7 @@ export async function GET(
         : "(no messages)",
       parentSessionId,
       transient: !filePath,
+      contextUsage,
     } : null;
 
     return NextResponse.json({
@@ -82,6 +90,7 @@ export async function GET(
       leafId,
       tree,
       context,
+      contextUsage,
       totalActiveMs,
     });
   } catch (error) {

@@ -60,6 +60,7 @@ export interface SessionData {
     thinkingLevel: string;
     model: { provider: string; modelId: string } | null;
   };
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null } | null;
 }
 
 interface AgentEvent {
@@ -772,6 +773,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setEntryIds(d.context.entryIds ?? []);
       setCurrentModelOverride((current) => modelSwitchPendingRef.current ? current : null);
       setError(null);
+      if (d.contextUsage !== undefined) setContextUsage(d.contextUsage ?? null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
         setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
       }

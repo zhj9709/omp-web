@@ -346,6 +346,9 @@ export interface SessionInfo {
   /** True while the runtime session exists only in memory and its JSONL file
    *  has not been created yet. Disk-backed actions must wait until this clears. */
   transient?: boolean;
+  /** Last known context usage (tokens used / context window). Null when the
+   *  file has no usable assistant entry or the model window is unknown. */
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null } | null;
 }
 
 export interface SessionContext {

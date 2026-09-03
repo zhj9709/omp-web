@@ -327,6 +327,69 @@ export function flattenModelsDevCatalog(value: unknown): ModelCatalogEntry[] {
   return entries;
 }
 
+// ============================================================================
+// models.dev catalog loading
+// ============================================================================
+// Shared by the models-config preset API and the cold-session context
+// estimator. The payload is multi-MB and the endpoint is rate-sensitive, so it
+// is refreshed at most once an hour, de-duplicated while in flight, and served
+// stale when a refresh fails (a stale window is better than no window).
+
+export const MODELS_DEV_CATALOG_URL = "https://models.dev/api.json";
+
+const CATALOG_TTL_MS = 60 * 60 * 1000;
+const CATALOG_FETCH_TIMEOUT_MS = 15_000;
+
+interface ModelsDevCatalogCache {
+  entries: ModelCatalogEntry[];
+  expiresAt: number;
+  inFlight?: Promise<ModelCatalogEntry[]>;
+}
+
+declare global {
+  var __ompModelsDevCatalogCache: ModelsDevCatalogCache | undefined;
+}
+
+async function fetchModelsDevCatalog(): Promise<ModelCatalogEntry[]> {
+  const response = await fetch(MODELS_DEV_CATALOG_URL, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(CATALOG_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`models.dev returned HTTP ${response.status}`);
+  const entries = flattenModelsDevCatalog(await response.json());
+  if (entries.length === 0) throw new Error("models.dev returned an empty catalog");
+  return entries;
+}
+
+/**
+ * Cached models.dev catalog. Throws only when there is nothing cached yet —
+ * once a catalog is in memory, later failures fall back to the stale copy.
+ */
+export async function loadModelsDevCatalog(): Promise<ModelCatalogEntry[]> {
+  const cache = globalThis.__ompModelsDevCatalogCache ??= { entries: [], expiresAt: 0 };
+  if (cache.entries.length > 0 && cache.expiresAt > Date.now()) return cache.entries;
+
+  if (!cache.inFlight) {
+    cache.inFlight = fetchModelsDevCatalog()
+      .then((entries) => {
+        cache.entries = entries;
+        cache.expiresAt = Date.now() + CATALOG_TTL_MS;
+        return entries;
+      })
+      .finally(() => {
+        cache.inFlight = undefined;
+      });
+  }
+
+  try {
+    return await cache.inFlight;
+  } catch (error) {
+    if (cache.entries.length > 0) return cache.entries;
+    throw error;
+  }
+}
+
 export function recommendModelCatalogPreset(
   entries: readonly ModelCatalogEntry[],
   query: string,

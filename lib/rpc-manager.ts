@@ -199,6 +199,11 @@ export class OmpSessionWrapper {
     return this._alive;
   }
 
+  /** Last known context usage from the live OMP process, or null. */
+  getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | null {
+    return this._contextUsage;
+  }
+
   isRunning(): boolean {
     return (
       this._alive &&
