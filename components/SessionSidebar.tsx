@@ -899,11 +899,14 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   const handleCloseProject = useCallback((project: RecentProject) => {
     setProjectContextMenu(null);
     void unpinProject(project.key);
-    // Closing the project that is currently selected drops the selection so
-    // the parent falls back to the "no workspace" placeholder. The list stays
-    // open so several projects can be closed in a row.
-    if (projectFor(selectedCwd)?.key === project.key) setSelectedCwd(null);
-  }, [projectFor, selectedCwd, unpinProject]);
+    // Closing the project that is currently selected auto-selects the first
+    // remaining project so the user always has an active workspace. The list
+    // stays open so several projects can be closed in a row.
+    if (projectFor(selectedCwd)?.key === project.key) {
+      const remaining = recentProjects.filter((p) => p.key !== project.key);
+      setSelectedCwd(remaining.length > 0 ? remaining[0].root : null);
+    }
+  }, [projectFor, selectedCwd, unpinProject, recentProjects]);
 
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
