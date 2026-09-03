@@ -466,8 +466,8 @@ export function TopBar({
       const percent = contextUsage.percent;
       if (percent !== null && percent > 90) contextColor = "var(--error)";
       else if (percent !== null && percent > 70) contextColor = "var(--warning)";
-      desktopContextText = percent !== null
-        ? `${percent.toFixed(0)}% / ${formatCompact(contextUsage.contextWindow)}`
+      desktopContextText = contextUsage.tokens !== null
+        ? `${formatCompact(contextUsage.tokens)} / ${formatCompact(contextUsage.contextWindow)}`
         : `? / ${formatCompact(contextUsage.contextWindow)}`;
       mobileContextText = percent !== null ? `${percent.toFixed(0)}%` : null;
     }
