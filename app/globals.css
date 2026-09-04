@@ -1627,6 +1627,14 @@ span.token.table {
     chat-wait-border-marquee 1.1s linear infinite;
 }
 
+/* Pin the user's scroll position to a stable DOM anchor while streaming content
+   mutates above. Without this, every markdown re-parse during a stream pushes
+   earlier messages up by their block margins (p/h/ul margins add up), making
+   the viewport visibly jump on each new block element. */
+.chat-scroll-container {
+  overflow-anchor: auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-wait-label { animation: none; color: var(--text-muted); background: none; }
   .chat-wait-spinner { animation-duration: 6s, 3s; }

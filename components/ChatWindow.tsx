@@ -713,13 +713,19 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
         contentEnd,
         container.clientHeight,
       );
-
+      // Lock the spacer height after the first correct reading. Re-running
+      // the math per token makes the spacer shrink as the streaming bubble
+      // grows, which (combined with the live-follow scroll) produces a
+      // visible ±30px back-and-forth oscillation. After the initial pin the
+      // spacer stays put; the browser's `overflow-anchor: auto` on the scroll
+      // container keeps the user message visually stable while content
+      // grows below it.
       const isInitialMeasurement = !promptAnchorAdjustmentDoneRef.current;
       const needsInitialAdjustment = isInitialMeasurement
         && nextPromptAnchorSpacerHeight > 0;
       if (isInitialMeasurement) promptAnchorAdjustmentDoneRef.current = true;
       if (nextPromptAnchorSpacerHeight === promptAnchorSpacerHeightRef.current) return;
-
+      if (!isInitialMeasurement) return;
       promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
       spacer.style.height = nextPromptAnchorSpacerHeight > 0
         ? `${nextPromptAnchorSpacerHeight}px`
@@ -1388,7 +1394,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
           )}
         </div>
       </div>
-        <div ref={scrollContainerRef} className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
+        <div ref={scrollContainerRef} className="chat-scroll-container min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: chatColumnMax, margin: "0 auto" }}>
             {renderedMessages}
