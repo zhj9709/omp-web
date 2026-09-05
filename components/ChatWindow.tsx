@@ -30,6 +30,52 @@ import {
   VISIBLE_PAGE_SIZE,
 } from "@/lib/chat-lazy-load";
 
+const SCROLL_POS_STORAGE_KEY = "omp-scroll-positions";
+const SCROLL_POS_WRITE_THROTTLE_MS = 250;
+// When looking for the "top" message to record as the user's last-seen
+// position, pick the message whose top sits in the top 30% of the viewport —
+// a touch below the very top so a tiny scroll-up at the very top still
+// records a stable target instead of jumping to "above the first message".
+const VIEWPORT_TOP_PICK_RATIO = 0.3;
+
+type ScrollPosRecord = { entryId: string; offset: number; savedAt: number };
+type ScrollPosMap = Record<string, ScrollPosRecord>;
+
+function readScrollPositions(): ScrollPosMap {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(SCROLL_POS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as ScrollPosMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeScrollPosition(sessionId: string, entryId: string, offset: number) {
+  if (typeof window === "undefined") return;
+  try {
+    const map = readScrollPositions();
+    map[sessionId] = { entryId, offset: Math.round(offset), savedAt: Date.now() };
+    window.localStorage.setItem(SCROLL_POS_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // localStorage disabled or quota exceeded — degrade silently.
+  }
+}
+
+function clearScrollPosition(sessionId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const map = readScrollPositions();
+    if (!(sessionId in map)) return;
+    delete map[sessionId];
+    window.localStorage.setItem(SCROLL_POS_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
 interface Props {
   session: SessionInfo | null;
   sessionRunning?: boolean;
@@ -561,6 +607,222 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
     return map;
   }, [messages]);
 
+  // Inverse of the above: ref index → message-array index. Used to resolve
+  // a DOM node from messageRefs back to an entryId for scroll-position
+  // persistence.
+  const refIndexToMessageIdx = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const [msgIdx, refIdx] of visibleRefIndexByMessage.entries()) {
+      map.set(refIdx, msgIdx);
+    }
+    return map;
+  }, [visibleRefIndexByMessage]);
+
+  // ── Per-session scroll-position persistence ──────────────────────────────
+  // On every session open we want to land back where the user last scrolled
+  // to. We persist the entryId of the message sitting in the top portion of
+  // the viewport — not a pixel offset — because ChatWindow uses a virtualized
+  // page of visible messages (visibleCount / sentinelRef) so the DOM height
+  // at any given moment may be far shorter than the full transcript; a saved
+  // scrollTop would clamp to the rendered ceiling and the user would see
+  // "top of page" instead of where they actually were.
+  const [pendingRestore, setPendingRestore] = useState<ScrollPosRecord | null>(null);
+  const restoreConsumedRef = useRef(false);
+  const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest-value mirror for the scroll listener below. The listener effect
+  // only re-runs when the session id changes, so it must NOT read entryIds /
+  // refIndexToMessageIdx through its closure — those are empty arrays on the
+  // first render (session still loading) and the effect would capture the
+  // stale empties forever. Refs give the handler the current render's data.
+  const scrollMetaRef = useRef({ entryIds: [] as string[], map: refIndexToMessageIdx });
+  scrollMetaRef.current = { entryIds, map: refIndexToMessageIdx };
+
+  // Read the saved position for the current session on mount / session change.
+  // Only meaningful when a real session is open; new-session drafts and the
+  // /new view have nothing to restore and must scroll to bottom as before.
+  useEffect(() => {
+    if (!session?.id) {
+      setPendingRestore(null);
+      restoreConsumedRef.current = false;
+      return;
+    }
+    restoreConsumedRef.current = false;
+    const map = readScrollPositions();
+    const saved = map[session.id];
+    setPendingRestore(saved ?? null);
+  }, [session?.id]);
+
+  // Persist the top entryId on scroll (throttled). The scroll listener is
+  // installed on the same container used by useAgentSession — multiple
+  // listeners on one element are allowed.
+  //
+  // The effect can run before scrollContainerRef is attached when ChatWindow
+  // mounts under an asynchronously-loaded session (URL ?session= fetches the
+  // record before ChatWindow commits). Defer the bind until the next
+  // animation frame, by which point React has committed and the ref is set.
+  useEffect(() => {
+    let rafId = 0;
+    let active = true;
+    const bind = (c: HTMLDivElement) => {
+      // Anchor element's top in *content coordinates* (px from the top of the
+      // scrollable content), independent of the current scroll position.
+      const elTopInContent = (el: HTMLElement): number =>
+        el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+      // Nearest message anchor to the viewport's top band, plus the pixel
+      // offset between them. Anchors are sparse (only user/assistant wrappers
+      // carry refs — a tool-result-heavy session can put thousands of pixels
+      // between two anchors), so the offset is what makes restore land within
+      // a few pixels of where the user actually was instead of jumping to the
+      // anchor's own top.
+      const pickTopAnchor = (): { entryId: string; offset: number } | null => {
+        const refs = messageRefs.current;
+        if (!refs || refs.length === 0) return null;
+        const { entryIds: ids, map } = scrollMetaRef.current;
+        if (!ids || ids.length === 0) return null;
+        const viewportTop =
+          c.scrollTop + c.clientHeight * VIEWPORT_TOP_PICK_RATIO;
+        let bestRefIdx = -1;
+        let bestDelta = Infinity;
+        for (let refIdx = 0; refIdx < refs.length; refIdx++) {
+          const el = refs[refIdx];
+          if (!el) continue;
+          const delta = Math.abs(elTopInContent(el) - viewportTop);
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            bestRefIdx = refIdx;
+          }
+        }
+        if (bestRefIdx === -1) return null;
+        const msgIdx = map.get(bestRefIdx);
+        if (msgIdx === undefined) return null;
+        const entryId = ids[msgIdx];
+        if (!entryId) return null;
+        const bestEl = refs[bestRefIdx];
+        if (!bestEl) return null;
+        return {
+          entryId,
+          offset: viewportTop - elTopInContent(bestEl),
+        };
+      };
+      const handler = () => {
+        if (!session?.id) return;
+        if (scrollSaveTimerRef.current !== null) {
+          clearTimeout(scrollSaveTimerRef.current);
+        }
+        scrollSaveTimerRef.current = setTimeout(() => {
+          scrollSaveTimerRef.current = null;
+          const anchor = pickTopAnchor();
+          if (anchor) writeScrollPosition(session.id, anchor.entryId, anchor.offset);
+        }, SCROLL_POS_WRITE_THROTTLE_MS);
+      };
+      c.addEventListener("scroll", handler, { passive: true });
+      cleanup = () => {
+        c.removeEventListener("scroll", handler);
+        // Flush any pending write so the user's last scroll before navigating
+        // away isn't lost when the timer is cancelled.
+        if (scrollSaveTimerRef.current !== null) {
+          clearTimeout(scrollSaveTimerRef.current);
+          scrollSaveTimerRef.current = null;
+          if (session?.id) {
+            const anchor = pickTopAnchor();
+            if (anchor) writeScrollPosition(session.id, anchor.entryId, anchor.offset);
+          }
+        }
+      };
+    };
+    let cleanup: (() => void) | null = null;
+    const initial = scrollContainerRef.current;
+    if (initial) {
+      bind(initial);
+    } else {
+      // The container can materialize several commits later (session record
+      // fetched asynchronously → ChatWindow content renders). Keep retrying
+      // once per frame until it shows up or the effect is torn down.
+      const poll = () => {
+        if (!active) return;
+        const c = scrollContainerRef.current;
+        if (c) {
+          bind(c);
+          return;
+        }
+        rafId = requestAnimationFrame(poll);
+      };
+      rafId = requestAnimationFrame(poll);
+    }
+    return () => {
+      active = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      if (cleanup) cleanup();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id]);
+
+  // Restore effect: when we have a pending saved position, expand the
+  // virtualized window if the target anchor isn't rendered yet, then scroll
+  // to (anchor top + saved offset). Mirrors the pattern used by scrollToMatch
+  // — first call sets visibleCount high, the effect re-running on the
+  // visibleCount change lands on the now-mounted DOM node.
+  //
+  // useLayoutEffect, not useEffect: useAgentSession's initial-scroll
+  // layout effect has already scrolled the container to the bottom by this
+  // point. Restoring in a layout effect rewrites scrollTop before the
+  // browser paints, so the user goes straight to their saved position
+  // instead of seeing a bottom-then-jump flash.
+  useLayoutEffect(() => {
+    if (!pendingRestore || restoreConsumedRef.current) return;
+    // The session record loads asynchronously — entryIds is empty until
+    // loadSession resolves. Wait (keep the pending target) instead of
+    // discarding, otherwise every restore would be killed before the data
+    // ever arrives.
+    if (entryIds.length === 0) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const targetMsgIdx = entryIds.indexOf(pendingRestore.entryId);
+    if (targetMsgIdx === -1) {
+      // The session may have been edited such that the saved entryId no
+      // longer exists in this transcript. Discard and fall back to bottom.
+      restoreConsumedRef.current = true;
+      setPendingRestore(null);
+      return;
+    }
+    const refIdx = visibleRefIndexByMessage.get(targetMsgIdx);
+    if (refIdx === undefined) return;
+    const el = messageRefs.current[refIdx];
+    if (!el) {
+      // Target is in the lazy-loaded window. Reveal enough history that
+      // its wrapper mounts; visibleCount change re-triggers this effect
+      // which will then find the mounted node and scroll to it.
+      setVisibleCount((current) => Math.max(current, messages.length * 2));
+      return;
+    }
+    const anchorTop =
+      el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    // Symmetric with the save path: put the viewport's top-band line back at
+    // (anchorTop + offset), i.e. scrollTop = anchorTop + offset - band height.
+    const target = Math.min(
+      Math.max(0, anchorTop + pendingRestore.offset - container.clientHeight * VIEWPORT_TOP_PICK_RATIO),
+      maxScrollTop,
+    );
+    container.scrollTo({ top: target, behavior: "auto" });
+    restoreConsumedRef.current = true;
+    setPendingRestore(null);
+  }, [pendingRestore, visibleCount, entryIds, visibleRefIndexByMessage, messageRefs, messages.length, scrollContainerRef]);
+
+  // Wrap handleSend so that firing a new prompt invalidates any saved
+  // scroll position for this session — the user's message just landed at
+  // the bottom and the saved "last seen" entryId would otherwise pin the
+  // viewport in the wrong place.
+  const handleSendAndResetScroll = useCallback(
+    (...args: Parameters<typeof handleSend>) => {
+      restoreConsumedRef.current = true;
+      setPendingRestore(null);
+      if (session?.id) clearScrollPosition(session.id);
+      return handleSend(...args);
+    },
+    [handleSend, session?.id],
+  );
+
   const scrollToMatch = useCallback((matchIdx: number) => {
     const match = searchMatches[matchIdx];
     if (!match) return;
@@ -1005,7 +1267,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
   const chatInputElement = (
     <ChatInput
       ref={chatInputRef}
-      onSend={handleSend}
+      onSend={handleSendAndResetScroll}
       onAbort={handleAbort}
       onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
