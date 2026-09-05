@@ -40,3 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .factory
+
+.idea/
+.codegraph/
+.docs/
+openspec/
+.openspec/
+.zcode/
