@@ -354,7 +354,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
     agentPhase,
     isNew,
     promptAnchorActive,
-    sessionIdRef, messagesEndRef, scrollContainerRef, lastUserMsgRef,
+    sessionIdRef, messagesEndRef, scrollContainerRef, lastUserMsgRef, promptAnchorPinTopRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleModelRoleChange,
     handleCompact, handleHandoff, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
@@ -681,6 +681,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
       promptAnchorUpdateRef.current = null;
       promptAnchorSpacerHeightRef.current = 0;
       promptAnchorAdjustmentDoneRef.current = false;
+      promptAnchorPinTopRef.current = null;
       if (spacer) spacer.style.height = "";
       return;
     }
@@ -713,19 +714,21 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
         contentEnd,
         container.clientHeight,
       );
-      // Lock the spacer height after the first correct reading. Re-running
-      // the math per token makes the spacer shrink as the streaming bubble
-      // grows, which (combined with the live-follow scroll) produces a
-      // visible ±30px back-and-forth oscillation. After the initial pin the
-      // spacer stays put; the browser's `overflow-anchor: auto` on the scroll
-      // container keeps the user message visually stable while content
-      // grows below it.
+      // Keep re-running the math as the streaming bubble grows: the spacer
+      // must drain back to 0 so the blank strip below the content disappears
+      // once the response fills the viewport. This is safe now because
+      // useAgentSession's follow scroll holds the fixed pin position
+      // (promptAnchorPinTopRef) during the pin phase instead of chasing the
+      // moving scroll bottom — the two writers can no longer land in
+      // different frames and fight each other into a visible oscillation.
+      promptAnchorPinTopRef.current = nextPromptAnchorSpacerHeight > 0
+        ? targetTop
+        : null;
       const isInitialMeasurement = !promptAnchorAdjustmentDoneRef.current;
       const needsInitialAdjustment = isInitialMeasurement
         && nextPromptAnchorSpacerHeight > 0;
       if (isInitialMeasurement) promptAnchorAdjustmentDoneRef.current = true;
       if (nextPromptAnchorSpacerHeight === promptAnchorSpacerHeightRef.current) return;
-      if (!isInitialMeasurement) return;
       promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
       spacer.style.height = nextPromptAnchorSpacerHeight > 0
         ? `${nextPromptAnchorSpacerHeight}px`

@@ -489,6 +489,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const isNearBottomRef = useRef(true);
   const previousScrollTopRef = useRef(0);
   const liveFollowFrameRef = useRef<number | null>(null);
+  // Live pin target during the prompt-anchor phase, written by ChatWindow's
+  // spacer measurement: the scrollTop that keeps the just-sent user message
+  // at the top of the viewport, or null once the streaming content outgrows
+  // the viewport (spacer drained) and bottom-following should resume.
+  const promptAnchorPinTopRef = useRef<number | null>(null);
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -682,7 +687,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const container = scrollContainerRef.current;
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    const pinTop = promptAnchorPinTopRef.current;
+    if (pinTop !== null && container) {
+      // Prompt-anchor phase: hold the just-sent user message at the top of
+      // the viewport instead of chasing the scroll bottom. The bottom moves
+      // with every streamed token (the anchor spacer shrinks as the response
+      // grows), so chasing it makes the spacer update and the follow scroll
+      // land in different frames — the visible ±30px oscillation. The pin
+      // target is fixed for the whole phase, so both writers converge on it.
+      container.scrollTo({
+        top: Math.min(pinTop, Math.max(0, container.scrollHeight - container.clientHeight)),
+        behavior: "auto",
+      });
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior });
+    }
     if (container) previousScrollTopRef.current = container.scrollTop;
   }, []);
 
@@ -2734,6 +2753,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Refs
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
+    promptAnchorPinTopRef,
     // Actions
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleModelRoleChange,
     handleCompact, handleHandoff, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
