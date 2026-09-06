@@ -3,9 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8");
-const loadSessionSource = source.slice(
-  source.indexOf("const loadSession = useCallback"),
-  source.indexOf("const loadContext = useCallback"),
+const loaderSource = await readFile(new URL("./agent-session/session-loader.ts", import.meta.url), "utf8");
+const loadSessionSource = loaderSource.slice(
+  loaderSource.indexOf("const loadSession = useCallback"),
+  loaderSource.indexOf("const loadContext = useCallback"),
 );
 const switchSource = source.slice(
   source.indexOf("const handleModelChange = useCallback"),

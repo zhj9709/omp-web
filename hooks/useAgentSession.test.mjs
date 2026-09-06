@@ -12,15 +12,17 @@ const sessionTypesSource = await readFile(new URL("./agent-session/types.ts", im
 const extensionUiSource = await readFile(new URL("./agent-session/extension-ui.ts", import.meta.url), "utf8");
 const coalescersSource = await readFile(new URL("./agent-session/coalescers.ts", import.meta.url), "utf8");
 const scrollSource = await readFile(new URL("./agent-session/scroll.ts", import.meta.url), "utf8");
+const eventStreamSource = await readFile(new URL("./agent-session/event-stream.ts", import.meta.url), "utf8");
+const sessionLoaderSource = await readFile(new URL("./agent-session/session-loader.ts", import.meta.url), "utf8");
 
 test("keeps the session event stream open through the idle grace window", () => {
-  const finishSource = source.slice(
-    source.indexOf("const finishPromptWithoutStream"),
-    source.indexOf("const waitForPromptSettlement"),
+  const finishSource = eventStreamSource.slice(
+    eventStreamSource.indexOf("const finishPromptWithoutStream"),
+    eventStreamSource.indexOf("const waitForPromptSettlement"),
   );
-  const graceSource = source.slice(
-    source.indexOf("const scheduleEventStreamClose"),
-    source.indexOf("const finishPromptWithoutStream"),
+  const graceSource = eventStreamSource.slice(
+    eventStreamSource.indexOf("const scheduleEventStreamClose"),
+    eventStreamSource.indexOf("const finishPromptWithoutStream"),
   );
   const agentEndSource = source.slice(
     source.indexOf('case "agent_end"'),
@@ -43,7 +45,7 @@ test("keeps the session event stream open through the idle grace window", () => 
     source.indexOf("  const executeBash = useCallback"),
   );
 
-  assert.match(source, /const EVENT_STREAM_IDLE_GRACE_MS = 30_000/);
+  assert.match(eventStreamSource, /const EVENT_STREAM_IDLE_GRACE_MS = 30_000/);
   assert.match(graceSource, /setTimeout\(\(\) => void checkServerIdle\(\), EVENT_STREAM_IDLE_GRACE_MS\)/);
   assert.match(graceSource, /fetch\(`\/api\/agent\/\$\{encodeURIComponent\(sid\)\}`\)/);
   assert.match(graceSource, /closeEvents\(\)/);
@@ -65,9 +67,9 @@ test("keeps the session event stream open through the idle grace window", () => 
 });
 
 test("a rejected submission preserves a different run reported by the server", () => {
-  const reconcileSource = source.slice(
-    source.indexOf("  const reconcileAgentState = useCallback"),
-    source.indexOf("  // Recovery net for missed SSE events"),
+  const reconcileSource = eventStreamSource.slice(
+    eventStreamSource.indexOf("  const reconcileAgentState = useCallback"),
+    eventStreamSource.indexOf("  // Recovery net for missed SSE events"),
   );
 
   assert.match(reconcileSource, /sessionIdRef\.current !== sid/);
@@ -235,13 +237,13 @@ test("post-accept prompt errors do not duplicate the user submission", () => {
 });
 
 test("delegates event stream readiness and hides an empty agent phase", () => {
-  const ensureSource = source.slice(
-    source.indexOf("const ensureEventsConnected"),
-    source.indexOf("const respondToExtensionUi"),
+  const ensureSource = eventStreamSource.slice(
+    eventStreamSource.indexOf("const ensureEventsConnected"),
+    eventStreamSource.indexOf("const settleUiStage"),
   );
 
-  assert.match(source, /new AgentEventConnection\(\{/);
-  assert.match(source, /shouldMaintain: \(sid\)[\s\S]*?sessionIdRef\.current === sid/);
+  assert.match(eventStreamSource, /new AgentEventConnection\(\{/);
+  assert.match(eventStreamSource, /shouldMaintain: \(sid\)[\s\S]*?sessionIdRef\.current === sid/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.ensureConnected\(sid\)/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.maintain\(sid\)/);
   assert.match(chatWindowSource, /const hasStreamingContent = Boolean\(streamState\.streamingMessage\?\.content\.length\)/);
@@ -251,17 +253,17 @@ test("delegates event stream readiness and hides an empty agent phase", () => {
 });
 
 test("uses one absolute agent-readiness deadline instead of a five-second transport deadline", () => {
-  assert.match(source, /EVENT_STREAM_READY_TIMEOUT_MS = 60_000/);
-  assert.doesNotMatch(source, /EVENT_STREAM_OPEN_TIMEOUT_MS/);
+  assert.match(eventStreamSource, /EVENT_STREAM_READY_TIMEOUT_MS = 60_000/);
+  assert.doesNotMatch(eventStreamSource, /EVENT_STREAM_OPEN_TIMEOUT_MS/);
 });
 
 test("connects a selected session when another browser reports it running", () => {
   assert.match(sessionTypesSource, /sessionRunning\?: boolean/);
   assert.match(
-    source,
-    /if \(!session\?\.id \|\| !sessionRunning\) return;[\s\S]*?maintainEventsConnected\(session\.id\)/,
+    eventStreamSource,
+    /if \(!sessionId \|\| !sessionRunning\) return;[\s\S]*?maintainEventsConnected\(sessionId\)/,
   );
-  assert.match(source, /maintainEventsConnected\(session\.id\)/);
+  assert.match(eventStreamSource, /maintainEventsConnected\(sessionId\)/);
   assert.doesNotMatch(source, /void connectEvents\(/);
   assert.match(chatWindowSource, /sessionRunning\?: boolean/);
   assert.match(chatWindowSource, /session, sessionRunning, newSessionCwd/);

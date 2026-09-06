@@ -60,6 +60,12 @@ export interface QueuedMessages {
   followUp: string[];
 }
 
+export function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
+  return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
+}
+
+export type ContextUsageInfo = { percent: number | null; contextWindow: number; tokens: number | null };
+
 export type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 export type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 
