@@ -297,13 +297,15 @@
   bottom: -7px;
 }
 
-/* "Expand N more" / "Collapse" button for groups with many sessions */
+/* "Expand N more" / "Collapse" button for groups with many sessions.
+   paddingLeft mirrors .sessionRow (19px padding + 4px sessionTitle margin)
+   so the label sits at the same X as a session row's title. */
 .expandMore {
   display: flex;
   align-items: center;
   gap: 4px;
   width: 100%;
-  padding: 5px 8px 5px 28px;
+  padding: 5px 8px 5px 23px;
   background: transparent;
   border: none;
   border-radius: 6px;

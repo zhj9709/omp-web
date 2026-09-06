@@ -49,6 +49,43 @@ export const TUI_ONLY_COMMAND_CATALOG: CatalogSlashCommand[] = [
   { name: "quit", description: "Quit the application" },
 ];
 
+/**
+ * Builtin slash commands that OMP executes natively in text/RPC mode (they
+ * carry a text-mode `handle` in the OMP slash-command registry). Forwarding
+ * these as prompts lets OMP intercept them (agentInvoked: false) and stream
+ * output back via command_output events — the same behavior as the TUI.
+ * Mirrors omp-src packages/coding-agent/src/slash-commands/*.ts.
+ */
+export const OMP_EXECUTABLE_SLASH_COMMANDS: Record<string, true> = {
+  // modes
+  security: true, model: true, models: true, fast: true, computer: true, vision: true, prewalk: true,
+  // collaboration
+  advisor: true, export: true, dump: true, share: true, browser: true,
+  // session
+  todo: true, jobs: true, usage: true, stats: true, changelog: true, tools: true, context: true, mcp: true,
+  // lifecycle
+  ssh: true, fresh: true, shake: true, memory: true, rename: true, move: true, "add-dir": true, "remove-dir": true, dirs: true,
+  // marketplace
+  marketplace: true, plugins: true, "reload-plugins": true,
+  // control
+  force: true, "force:": true,
+};
+
+/**
+ * Builtin slash commands with no text-mode handler (TUI-only). These cannot
+ * run through OMP RPC; surface an explicit message instead of forwarding them
+ * as prompts (which would reach the agent as ordinary text). Overlaps with
+ * TUI_ONLY_COMMAND_CATALOG above; commands the web UI handles locally
+ * (/settings, /switch, /collab, …) are consumed before this check runs.
+ */
+export const TUI_ONLY_SLASH_COMMANDS: Record<string, true> = {
+  plan: true, "plan-review": true, vibe: true, goal: true,
+  "guided-goal": true, loop: true, queue: true, join: true, leave: true,
+  hotkeys: true, agents: true, branch: true, fork: true, tree: true,
+  login: true, logout: true, clear: true, drop: true, resume: true, btw: true,
+  tan: true, omfg: true, retry: true, debug: true, exit: true, live: true, pause: true,
+};
+
 /** Command source values shared with the chat palette. */
 export type SlashCommandSource = "extension" | "prompt" | "skill" | "builtin" | "custom" | "file" | "mcp_prompt";
 

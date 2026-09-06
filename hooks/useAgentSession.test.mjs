@@ -7,6 +7,8 @@ const chatWindowSource = await readFile(new URL("../components/ChatWindow.tsx", 
 const chatInputSource = await readFile(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
 const appShellSource = await readFile(new URL("../components/AppShell.tsx", import.meta.url), "utf8")
   + "\n" + await readFile(new URL("../components/TopBar.tsx", import.meta.url), "utf8");
+const catalogSource = await readFile(new URL("../lib/slash-command-catalog.ts", import.meta.url), "utf8");
+const sessionTypesSource = await readFile(new URL("./agent-session/types.ts", import.meta.url), "utf8");
 
 test("keeps the session event stream open through the idle grace window", () => {
   const finishSource = source.slice(
@@ -251,7 +253,7 @@ test("uses one absolute agent-readiness deadline instead of a five-second transp
 });
 
 test("connects a selected session when another browser reports it running", () => {
-  assert.match(source, /sessionRunning\?: boolean/);
+  assert.match(sessionTypesSource, /sessionRunning\?: boolean/);
   assert.match(
     source,
     /if \(!session\?\.id \|\| !sessionRunning\) return;[\s\S]*?maintainEventsConnected\(session\.id\)/,
@@ -485,8 +487,8 @@ test("forwards TUI-rename/reload-plugins through the OMP prompt path", () => {
   // /reload-plugins live in the OMP-executable forward list.
   assert.doesNotMatch(slashSource, /case "reload":/);
   assert.doesNotMatch(slashSource, /case "name":/);
-  assert.match(source, /rename: true/);
-  assert.match(source, /"reload-plugins": true/);
+  assert.match(catalogSource, /rename: true/);
+  assert.match(catalogSource, /"reload-plugins": true/);
   assert.match(slashSource, /type: "prompt", message: text, streamingBehavior: "steer"/);
 });
 

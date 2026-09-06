@@ -3,13 +3,9 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useReducer } from "react";
 import type {
   AgentMessage,
-  BlockingExtensionUiRequest,
   ExtensionStatusItem,
   ExtensionUiRequest,
   ExtensionWidgetItem,
-  SessionInfo,
-  SessionTreeNode,
-  UserMessage,
 } from "@/lib/types";
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { projectIdentityKey } from "@/lib/project-identity";
@@ -31,14 +27,20 @@ import {
   mergeSubagentSnapshot,
   normalizeSubagentEvent,
   upsertSubagent,
+  SUBAGENT_TERMINAL_STATUSES,
   type SubagentInfo,
   type SubagentTranscript,
 } from "@/lib/subagents";
 import { normalizeGoalEvent, type GoalModeInfo } from "@/lib/goal";
-import { mergeTuiOnlyCommands } from "@/lib/slash-command-catalog";
+import {
+  OMP_EXECUTABLE_SLASH_COMMANDS,
+  TUI_ONLY_SLASH_COMMANDS,
+  mergeTuiOnlyCommands,
+} from "@/lib/slash-command-catalog";
 import { userMessageKey } from "@/lib/prompt-recovery";
 import { AgentEventConnection } from "@/lib/agent-event-connection";
-import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
+import { extractToolCommand, getToolExecutionProgress, toolArgsDigest } from "@/lib/tool-execution-progress";
+import { readCompactResult, type CompactCommandResult, type CompactResultInfo } from "@/lib/compaction-summary";
 import {
   CHAT_SCROLL_REATTACH_TOLERANCE,
   CHAT_SCROLL_TAIL_TOLERANCE,
@@ -49,184 +51,51 @@ import {
   streamReducer,
   type ClientAssistantMessageEvent,
 } from "@/lib/streaming-message";
+import {
+  createNoticeId,
+  NOTICE_EXIT_ANIMATION_MS,
+  NOTICE_VISIBLE_MS,
+  noticeReducer,
+  type NoticeType,
+} from "./agent-session/notices";
+import type {
+  AgentEvent,
+  AgentPhase,
+  AgentStateResponse,
+  AttachedImage,
+  BuiltinSlashCommandResult,
+  ExtensionUiCustomRequest,
+  ExtensionUiDialogRequest,
+  LastAssistantTextResponse,
+  ModelEntry,
+  ModelRoleEntry,
+  ModelsResponse,
+  QueuedMessages,
+  SelectedModel,
+  SessionData,
+  SlashCommandInfo,
+  SlashCommandsResponse,
+  ThinkingLevelOption,
+  UseAgentSessionOptions,
+} from "./agent-session/types";
 
-export interface SessionData {
-  sessionId: string;
-  filePath: string;
-  totalActiveMs: number;
-  tree: SessionTreeNode[];
-  leafId: string | null;
-  context: {
-    messages: AgentMessage[];
-    entryIds: string[];
-    thinkingLevel: string;
-    model: { provider: string; modelId: string } | null;
-  };
-  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null } | null;
-}
-
-interface AgentEvent {
-  type: string;
-  [key: string]: unknown;
-}
-
-interface CompactCommandResult {
-  tokensBefore?: number;
-  estimatedTokensAfter?: number;
-}
-
-interface LastAssistantTextResponse {
-  text?: string;
-}
-
-type AgentStateResponse = {
-  contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
-  systemPrompt?: string;
-  thinkingLevel?: string;
-  isStreaming?: boolean;
-  isPromptRunning?: boolean;
-  isBashRunning?: boolean;
-  isCompacting?: boolean;
-  extensionStatuses?: ExtensionStatusItem[];
-  extensionWidgets?: ExtensionWidgetItem[];
-  queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
-  fastModeEnabled?: boolean;
-  fastModeActive?: boolean;
-  steeringMode?: string;
-  followUpMode?: string;
-  interruptMode?: string;
-  todoPhases?: unknown;
-  subagentSubscription?: { level: string | null; available: boolean };
-};
-
-export interface QueuedMessages {
-  steering: string[];
-  followUp: string[];
-}
+export type {
+  AgentPhase,
+  AttachedImage,
+  BuiltinSlashCommandResult,
+  ChatInputHandle,
+  QueuedMessages,
+  SessionData,
+  SlashCommandInfo,
+  ThinkingLevelOption,
+  UseAgentSessionOptions,
+} from "./agent-session/types";
+export type { CompactResultInfo } from "@/lib/compaction-summary";
+export type { NoticeItem, NoticeType } from "./agent-session/notices";
 
 function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
   return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
 }
-
-type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
-type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
-export type NoticeType = "info" | "success" | "warning" | "error";
-
-export type NoticeItem = {
-  id: string;
-  message: string;
-  type: NoticeType;
-  exiting?: boolean;
-};
-
-type NoticeState = {
-  visible: NoticeItem[];
-  pending: NoticeItem[];
-};
-
-type NoticeAction =
-  | { type: "add"; notice: NoticeItem }
-  | { type: "mark_oldest_exiting" }
-  | { type: "remove"; id: string };
-
-export type AgentPhase =
-  | { kind: "waiting_model" }
-  | { kind: "thinking" }
-  | { kind: "running_command" }
-  | { kind: "running_tools"; tools: { id: string; name: string; progress?: string; detail?: string }[] }
-  | null;
-
-export interface CompactResultInfo {
-  reason: "manual" | "threshold" | "overflow" | "auto" | string;
-  tokensBefore: number;
-  estimatedTokensAfter: number;
-}
-
-export interface SlashCommandInfo {
-  name: string;
-  description?: string;
-  source: "extension" | "prompt" | "skill" | "builtin" | "custom" | "file" | "mcp_prompt";
-  sourceInfo?: {
-    path: string;
-    source: string;
-    scope: "user" | "project" | "temporary";
-    origin: "package" | "top-level";
-    baseDir?: string;
-  };
-}
-
-/**
- * Builtin slash commands that OMP executes natively in text/RPC mode (they
- * carry a text-mode `handle` in the OMP slash-command registry). Forwarding
- * these as prompts lets OMP intercept them (agentInvoked: false) and stream
- * output back via command_output events — the same behavior as the TUI.
- * Mirrors omp-src packages/coding-agent/src/slash-commands/*.ts.
- */
-const OMP_EXECUTABLE_SLASH_COMMANDS: Record<string, true> = {
-  // modes
-  security: true, model: true, models: true, fast: true, computer: true, vision: true, prewalk: true,
-  // collaboration
-  advisor: true, export: true, dump: true, share: true, browser: true,
-  // session
-  todo: true, jobs: true, usage: true, stats: true, changelog: true, tools: true, context: true, mcp: true,
-  // lifecycle
-  ssh: true, fresh: true, shake: true, memory: true, rename: true, move: true, "add-dir": true, "remove-dir": true, dirs: true,
-  // marketplace
-  marketplace: true, plugins: true, "reload-plugins": true,
-  // control
-  force: true, "force:": true,
-};
-
-/**
- * Builtin slash commands with no text-mode handler (TUI-only). These cannot
- * run through OMP RPC; surface an explicit message instead of forwarding them
- * as prompts (which would reach the agent as ordinary text).
- */
-const TUI_ONLY_SLASH_COMMANDS: Record<string, true> = {
-  plan: true, "plan-review": true, vibe: true, goal: true,
-  "guided-goal": true, loop: true, queue: true, join: true, leave: true,
-  hotkeys: true, agents: true, branch: true, fork: true, tree: true,
-  login: true, logout: true, clear: true, drop: true, resume: true, btw: true,
-  tan: true, omfg: true, retry: true, debug: true, exit: true, live: true, pause: true,
-};
-
-/** Terminal subagent statuses (lifecycle frames use "started" for live). */
-const SUBAGENT_TERMINAL_STATUSES: Record<string, true> = {
-  completed: true, done: true, succeeded: true, failed: true, error: true, aborted: true,
-};
-
-export type BuiltinSlashCommandResult =
-  | { handled: false }
-  | { handled: true; message?: string; error?: string; action?: "openSessionStats" };
-
-export interface UseAgentSessionOptions {
-  session: SessionInfo | null;
-  sessionRunning?: boolean;
-  newSessionCwd: string | null;
-  newSessionDraftKey: string | null;
-  onAgentEnd?: () => void;
-  onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
-  onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
-  onSessionForked?: (newSessionId: string) => void;
-  modelsRefreshKey?: number;
-  chatInputRef?: React.RefObject<ChatInputHandle | null>;
-  onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => void;
-  onSystemPromptChange?: (prompt: string | null) => void;
-  /** Registers an action that lazily starts the session and returns its system prompt. */
-  onSystemPromptLoaderChange?: (loader: (() => Promise<void>) | null) => void;
-  onSessionStatsPanelOpen?: () => void;
-  setToolPreset?: (preset: ToolPreset) => void;
-  /** Opens the settings panel (maps the TUI-only /settings command). */
-  onOpenSettings?: () => void;
-  /** Starts a new session in the given working directory (maps TUI /new). */
-  onOpenNewSession?: (cwd: string) => void;
-  /** Opens the plugins panel (maps TUI /extensions). */
-  onOpenPlugins?: () => void;
-  /** Opens the collaboration panel (maps TUI /collab). */
-  onOpenCollab?: () => void;
-}
-
-export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
@@ -236,146 +105,9 @@ const AGENT_STATE_RECONCILE_MS = 15_000;
 const BASH_STATE_RECONCILE_MS = 1_000;
 const EVENT_STREAM_READY_TIMEOUT_MS = 60_000;
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1_000;
-const MAX_NOTICES = 5;
-const NOTICE_VISIBLE_MS = 5000;
-const NOTICE_EXIT_ANIMATION_MS = 180;
-function createNoticeId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-/**
- * Short human-readable digest of a tool call's arguments for the activity
- * line: the path / pattern / query / url / command the tool is working on
- * (TUI status lines show the object of the action, not just its name).
- * Returns null when nothing recognizable is present.
- */
-function toolArgsDigest(args: Record<string, unknown>): string | null {
-  const keys = ["path", "file_path", "filePath", "pattern", "query", "url", "command", "name"];
-  for (const key of keys) {
-    const value = args[key];
-    if (typeof value === "string" && value.trim()) {
-      const short = value.length > 60 ? value.slice(0, 57) + "…" : value;
-      return short;
-    }
-  }
-  return null;
-}
-
-function markOldestNoticeExiting(notices: NoticeItem[]): NoticeItem[] {
-  const index = notices.findIndex((notice) => !notice.exiting);
-  if (index === -1) return notices;
-  return notices.map((notice, i) => (
-    i === index ? { ...notice, exiting: true } : notice
-  ));
-}
-
-function fillPendingNotices(visible: NoticeItem[], pending: NoticeItem[]): NoticeState {
-  let nextVisible = visible;
-  let nextPending = pending;
-  while (nextPending.length > 0 && nextVisible.length < MAX_NOTICES) {
-    const [next, ...rest] = nextPending;
-    nextVisible = [...nextVisible, next];
-    nextPending = rest;
-  }
-  if (nextPending.length > 0 && !nextVisible.some((notice) => notice.exiting)) {
-    nextVisible = markOldestNoticeExiting(nextVisible);
-  }
-  return { visible: nextVisible, pending: nextPending };
-}
-
-function noticeReducer(state: NoticeState, action: NoticeAction): NoticeState {
-  switch (action.type) {
-    case "add": {
-      if (state.visible.some((notice) => notice.exiting) || state.visible.length >= MAX_NOTICES) {
-        return {
-          visible: state.visible.some((notice) => notice.exiting)
-            ? state.visible
-            : markOldestNoticeExiting(state.visible),
-          pending: [...state.pending, action.notice],
-        };
-      }
-      return { ...state, visible: [...state.visible, action.notice] };
-    }
-    case "mark_oldest_exiting":
-      return { ...state, visible: markOldestNoticeExiting(state.visible) };
-    case "remove": {
-      const visible = state.visible.filter((notice) => notice.id !== action.id);
-      return fillPendingNotices(visible, state.pending);
-    }
-    default:
-      return state;
-  }
-}
-
-function readCompactResult(result: unknown, reason: string): CompactResultInfo | null {
-  if (!result || typeof result !== "object") return null;
-  const r = result as CompactCommandResult;
-  if (typeof r.tokensBefore !== "number" || typeof r.estimatedTokensAfter !== "number") return null;
-  return { reason, tokensBefore: r.tokensBefore, estimatedTokensAfter: r.estimatedTokensAfter };
-}
-
-/** Pull the concrete shell command out of a toolcall's arguments payload. */
-function extractToolCommand(argumentsValue: unknown): string | null {
-  if (typeof argumentsValue === "string") {
-    try {
-      const parsed = JSON.parse(argumentsValue) as unknown;
-      if (parsed && typeof parsed === "object") {
-        const cmd = (parsed as Record<string, unknown>).command;
-        if (typeof cmd === "string" && cmd.trim()) return cmd;
-      }
-    } catch {
-      // Not JSON — not a command payload.
-    }
-    return null;
-  }
-  if (argumentsValue && typeof argumentsValue === "object") {
-    const cmd = (argumentsValue as Record<string, unknown>).command;
-    if (typeof cmd === "string" && cmd.trim()) return cmd;
-  }
-  return null;
-}
-
-export interface ChatInputHandle {
-  insertText: (text: string) => void;
-  insertIfEmpty: (content: string) => void;
-  replaceMessage: (message: UserMessage) => void;
-  prependText: (text: string) => void;
-  addImages: (files: File[]) => void;
-  rekeyDraft: (previousKey: string, nextKey: string) => void;
-  restoreSubmission: (text: string, images?: Array<{ data: string; mimeType: string }>, targetDraftKey?: string) => void;
-}
-
-export interface AttachedImage {
-  data: string;
-  mimeType: string;
-  previewUrl: string;
-}
-
-type SelectedModel = { provider: string; modelId: string };
-type ModelEntry = { id: string; name: string; provider: string };
-type ModelRoleEntry = { name: string; provider: string; modelId: string; thinkingLevel: string | null };
-type ModelsResponse = {
-  models: Record<string, string>;
-  modelList?: ModelEntry[];
-  modelRoles?: ModelRoleEntry[];
-  defaultModel?: SelectedModel | null;
-  thinkingLevels?: Record<string, string[]>;
-  thinkingLevelMaps?: Record<string, Record<string, string | null>>;
-  thinkingLevelPins?: Record<string, string>;
-  modelError?: string;
-  modelScopeWarnings?: string[];
-};
-
-type SlashCommandsResponse = {
-  commands?: SlashCommandInfo[];
-};
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {

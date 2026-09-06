@@ -203,6 +203,11 @@ export function subagentIsActive(info: SubagentInfo): boolean {
   );
 }
 
+/** Terminal subagent statuses (lifecycle frames use "started" for live). */
+export const SUBAGENT_TERMINAL_STATUSES: Record<string, true> = {
+  completed: true, done: true, succeeded: true, failed: true, error: true, aborted: true,
+};
+
 /* ------------------------------------------------------------------ */
 /* Disk-derived spawn records (see lib/subagent-history.ts)            */
 /* ------------------------------------------------------------------ */

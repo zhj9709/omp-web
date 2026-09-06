@@ -4,6 +4,8 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const sessionSource = await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8");
+const catalogSource = await readFile(new URL("../lib/slash-command-catalog.ts", import.meta.url), "utf8");
+const sessionTypesSource = await readFile(new URL("./agent-session/types.ts", import.meta.url), "utf8");
 
 const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
@@ -38,8 +40,8 @@ test("TUI-renamed commands are forwarded to OMP instead of local RPC calls", () 
   // forwarded through the OMP-executable list.
   assert.doesNotMatch(slashSource, /case "reload":/);
   assert.doesNotMatch(slashSource, /case "name":/);
-  assert.match(sessionSource, /rename: true/);
-  assert.match(sessionSource, /"reload-plugins": true/);
+  assert.match(catalogSource, /rename: true/);
+  assert.match(catalogSource, /"reload-plugins": true/);
   assert.match(slashSource, /type: "prompt", message: text, streamingBehavior: "steer"/);
 });
 
@@ -59,7 +61,7 @@ test("TUI-only commands and settings/new/quit/resume are handled locally", () =>
 
 test("SlashCommandInfo.source accepts builtin, custom, file, and mcp_prompt origins", () => {
   assert.match(
-    sessionSource,
+    sessionTypesSource,
     /source:\s*"extension"\s*\|\s*"prompt"\s*\|\s*"skill"\s*\|\s*"builtin"\s*\|\s*"custom"\s*\|\s*"file"\s*\|\s*"mcp_prompt"/,
   );
 });

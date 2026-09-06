@@ -32,3 +32,21 @@ export function parseCompactionSummary(summary: string): ParsedCompactionSummary
     modifiedFiles,
   };
 }
+
+export interface CompactCommandResult {
+  tokensBefore?: number;
+  estimatedTokensAfter?: number;
+}
+
+export interface CompactResultInfo {
+  reason: "manual" | "threshold" | "overflow" | "auto" | string;
+  tokensBefore: number;
+  estimatedTokensAfter: number;
+}
+
+export function readCompactResult(result: unknown, reason: string): CompactResultInfo | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as CompactCommandResult;
+  if (typeof r.tokensBefore !== "number" || typeof r.estimatedTokensAfter !== "number") return null;
+  return { reason, tokensBefore: r.tokensBefore, estimatedTokensAfter: r.estimatedTokensAfter };
+}
