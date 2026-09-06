@@ -10,6 +10,7 @@ import {
   removePinnedProject,
   type PinnedProject,
 } from "@/lib/pinned-projects";
+import { projectIdentityKey } from "@/lib/project-identity";
 
 interface PinBody { action: "pin"; key: string; root: string; }
 interface UnpinBody { action: "unpin"; key: string; }
@@ -18,13 +19,64 @@ interface CloseBody { action: "close" | "reopen"; key: string; }
 interface ReorderBody { action: "reorder"; order: string[]; }
 type Body = PinBody | UnpinBody | ReplaceBody | CloseBody | ReorderBody;
 
+// Older builds pinned projects under the raw cwd as key, which on Windows
+// differs from the server's canonical projectKey (case-folded, normalized
+// separators) and made the same project appear twice in the sidebar.
+// Canonicalize every stored key and merge duplicates that resolve to one path.
+function canonicalizeProjects(projects: PinnedProject[]): PinnedProject[] {
+  const byKey = new Map<string, PinnedProject>();
+  for (const p of projects) {
+    const key = projectIdentityKey(p.root);
+    if (!key) continue;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...p, key });
+      continue;
+    }
+    // Prefer the root of the entry that already carried the canonical key,
+    // and keep the most recent lastOpenedAt.
+    byKey.set(key, {
+      key,
+      root: existing.key === key ? existing.root : p.root,
+      lastOpenedAt: existing.lastOpenedAt > p.lastOpenedAt ? existing.lastOpenedAt : p.lastOpenedAt,
+    });
+  }
+  return [...byKey.values()];
+}
+
+function canonicalizeKeyList(keys: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of keys) {
+    const canonical = projectIdentityKey(k);
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    out.push(canonical);
+  }
+  return out;
+}
+
 export async function GET(): Promise<NextResponse> {
   const [projects, closedProjects, projectOrder] = await Promise.all([
     readPinnedProjects(),
     readClosedProjects(),
     readProjectOrder(),
   ]);
-  return NextResponse.json({ projects, closedProjects, projectOrder });
+  const nextProjects = canonicalizeProjects(projects);
+  const nextClosed = canonicalizeKeyList(closedProjects);
+  const nextOrder = canonicalizeKeyList(projectOrder);
+  // Self-heal: persist the canonicalized form so the fixup happens once, not
+  // on every read.
+  if (JSON.stringify(nextProjects) !== JSON.stringify(projects)) {
+    await writePinnedProjects(nextProjects);
+  }
+  if (JSON.stringify(nextClosed) !== JSON.stringify(closedProjects)) {
+    await writeClosedProjects(nextClosed);
+  }
+  if (JSON.stringify(nextOrder) !== JSON.stringify(projectOrder)) {
+    await writeProjectOrder(nextOrder);
+  }
+  return NextResponse.json({ projects: nextProjects, closedProjects: nextClosed, projectOrder: nextOrder });
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -41,7 +93,9 @@ export async function POST(req: Request): Promise<NextResponse> {
     if (typeof body.key !== "string" || typeof body.root !== "string") {
       return NextResponse.json({ error: "key and root are required" }, { status: 400 });
     }
-    const next = upsertPinnedProject(current, body.key, body.root);
+    // Derive the key from the root so a client that pinned under a raw
+    // (non-canonical) cwd cannot reintroduce a duplicate entry.
+    const next = upsertPinnedProject(canonicalizeProjects(current), projectIdentityKey(body.root), body.root);
     await writePinnedProjects(next);
     return NextResponse.json({ projects: next });
   }

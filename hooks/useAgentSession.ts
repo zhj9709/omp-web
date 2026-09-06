@@ -12,6 +12,7 @@ import type {
   UserMessage,
 } from "@/lib/types";
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
+import { projectIdentityKey } from "@/lib/project-identity";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { AgentCommandError, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
 import { clearDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
@@ -933,6 +934,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       id: sid,
       path: "",
       cwd: newSessionCwd,
+      // Server-derived identities are unavailable for a session that is not on
+      // disk yet, but the sidebar groups and pins by projectKey. Compute the
+      // same identity the server would (canonical path form) so the transient
+      // session lands in the existing project group instead of spawning a
+      // duplicate one.
+      projectRoot: newSessionCwd,
+      projectKey: projectIdentityKey(newSessionCwd),
       name: undefined,
       created: new Date().toISOString(),
       modified: new Date().toISOString(),

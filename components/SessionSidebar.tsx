@@ -342,6 +342,10 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
   const loadSessionsRequestIdRef = useRef(0);
+  // Mirror of the selectedSession prop; read inside async loadSessions without
+  // making the callback depend on it.
+  const selectedSessionRef = useRef<SessionInfo | null>(selectedSession);
+  selectedSessionRef.current = selectedSession;
   // Floating scrollbar: the session list's thumb stays transparent until the
   // pointer enters the list, then lingers ~2s after it leaves (no display
   // toggling — scrollbar-gutter keeps layout stable).
@@ -418,7 +422,18 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[] };
       if (requestId !== loadSessionsRequestIdRef.current) return;
-      setAllSessions(data.sessions);
+      setAllSessions(() => {
+        // A brand-new session's .jsonl file may not exist yet when a refresh
+        // lands (OMP writes it asynchronously). Re-attach the selected
+        // transient session whenever the response lacks it — whether or not
+        // an earlier optimistic merge already added it — so it cannot vanish
+        // mid-run.
+        const sel = selectedSessionRef.current;
+        if (sel?.transient && !data.sessions.some((s) => s.id === sel.id)) {
+          return [...data.sessions, sel];
+        }
+        return data.sessions;
+      });
       // Treat the fetched running set as an initial fallback only. Once the
       // lightweight poll is live, a slow session-list fetch cannot overwrite it.
       if (!runningPollAuthoritativeRef.current) {
@@ -773,7 +788,8 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     [allSessions, runningSessionIds, unreadSessionIds],
   );
 
-  // Remove a closed key locally (server write is the caller's job).
+  // Remove a closed key locally and on the server — re-adding a closed
+  // project's directory (or reopening it) must survive a page refresh.
   const reopenProject = useCallback((key: string) => {
     setClosedProjects((prev) => {
       if (!prev.has(key)) return prev;
@@ -781,6 +797,11 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
       next.delete(key);
       return next;
     });
+    void fetch("/api/preferences/pinned-projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reopen", key }),
+    }).catch((err) => console.error("[omp-web] failed to reopen project:", err));
   }, []);
 
   // Persist a new project order (drag & drop / newly-opened-first).
