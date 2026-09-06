@@ -188,7 +188,12 @@
   font-size: 12px;
   color: var(--alias-label-secondary);
 }
-/* Hover: no background fill — only the chevron/text color darkens slightly. */
+/* Hover: same background fill as session rows, plus the chevron/text color
+   darkening slightly. */
+.projectHeader:hover,
+.projectHeaderMenuOpen {
+  background: var(--alias-interactive-bg-hover);
+}
 .projectHeader:hover .projectHeaderChevron,
 .projectHeader:hover .projectName {
   color: var(--alias-label-primary);
