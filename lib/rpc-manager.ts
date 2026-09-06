@@ -41,6 +41,11 @@ export interface RpcSessionStartOptions {
 // ---------------------------------------------------------------------------
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+// While a session reports itself running, the idle timer re-verifies against
+// OMP on this cadence instead of camping for the full 10 minutes — a missed
+// agent_end would otherwise keep the session "running" in the sidebar until
+// the process died.
+const RUNNING_VERIFY_MS = 60 * 1000;
 
 const RUNNING_STATE_EVENT_TYPES = new Set([
   "agent_start",
@@ -219,6 +224,14 @@ export class OmpSessionWrapper {
   start(): void {
     this.unsubscribe = this.client.onEvent((event: OmpEvent) => {
       this.handleOmpEvent(event);
+    });
+
+    // If the omp child dies unexpectedly (crash, killed externally), this
+    // wrapper would otherwise stay in the registry reporting "running"
+    // forever — nothing else tears it down. Destroy on exit so the running
+    // list clears and a fresh child spawns on the next command.
+    void this.client.waitExit().then(() => {
+      this.destroy();
     });
 
     // Sync initial state from OMP
@@ -894,11 +907,25 @@ export class OmpSessionWrapper {
     return resolve;
   }
 
-  private resetIdleTimer(): void {
+  private resetIdleTimer(ms: number = IDLE_TIMEOUT_MS): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(() => {
       if (this.isRunning()) {
-        this.resetIdleTimer();
+        // OMP's own state is authoritative: re-sync before staying "running".
+        // syncStateStrict heals the local flags (mapGetState) if an event was
+        // missed, and notifyRunningChange() pushes the corrected snapshot.
+        void this.syncStateStrict()
+          .catch(() => { /* unreachable OMP — retry on the next tick */ })
+          .then(() => {
+            if (!this._alive) return;
+            if (this.isRunning()) this.resetIdleTimer(RUNNING_VERIFY_MS);
+            else return this.shutdown().catch((error) => {
+              console.error(
+                "[omp-web] failed to shut down idle session:",
+                error instanceof Error ? error.message : error,
+              );
+            });
+          });
         return;
       }
       void this.shutdown().catch((error) => {
@@ -907,7 +934,7 @@ export class OmpSessionWrapper {
           error instanceof Error ? error.message : error,
         );
       });
-    }, IDLE_TIMEOUT_MS);
+    }, ms);
   }
 
   /**
@@ -921,6 +948,15 @@ export class OmpSessionWrapper {
       | { tokens: number | null; contextWindow: number; percent: number | null }
       | undefined;
     const systemPrompt = raw.systemPrompt as string[] | string | undefined;
+
+    // OMP's own state is authoritative. A missed agent_end event would
+    // otherwise leave the local flags stuck at "running" forever (sidebar
+    // running indicator never clears). Heal on every state read and push the
+    // corrected snapshot to running-status listeners.
+    const wasRunning = this.isRunning();
+    if (typeof raw.isStreaming === "boolean") this._isStreaming = raw.isStreaming;
+    if (typeof raw.isCompacting === "boolean") this._isCompacting = raw.isCompacting;
+    if (this.isRunning() !== wasRunning) notifyRunningChange();
 
     return {
       sessionId: (raw.sessionId as string) ?? this._sessionId,
