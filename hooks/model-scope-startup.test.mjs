@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const source = await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8");
+const newSessionFlowSource = await readFile(new URL("./agent-session/new-session.ts", import.meta.url), "utf8");
+const modelsSource = await readFile(new URL("./agent-session/models.ts", import.meta.url), "utf8");
 
 test("new-session startup sends only explicit browser overrides", () => {
-  const ensureSource = source.slice(
-    source.indexOf("const ensureNewSession"),
-    source.indexOf("const loadSlashCommands"),
+  const ensureSource = newSessionFlowSource.slice(
+    newSessionFlowSource.indexOf("const ensureNewSession"),
   );
 
   assert.match(ensureSource, /const selectedModel = newSessionModelOverrideRef\.current;/);
@@ -17,9 +17,8 @@ test("new-session startup sends only explicit browser overrides", () => {
 });
 
 test("new-session startup adopts server state only while explicit overrides are unchanged", () => {
-  const ensureSource = source.slice(
-    source.indexOf("const ensureNewSession"),
-    source.indexOf("const loadSlashCommands"),
+  const ensureSource = newSessionFlowSource.slice(
+    newSessionFlowSource.indexOf("const ensureNewSession"),
   );
 
   assert.match(
@@ -36,9 +35,9 @@ test("new-session startup adopts server state only while explicit overrides are 
 });
 
 test("model-list refresh does not overwrite a live session or explicit thinking override", () => {
-  const loadModelsSource = source.slice(
-    source.indexOf("const loadModels = useCallback"),
-    source.indexOf("const handleBuiltinSlashCommand"),
+  const loadModelsSource = modelsSource.slice(
+    modelsSource.indexOf("const loadModels = useCallback"),
+    modelsSource.indexOf("  // Load model list"),
   );
 
   assert.match(loadModelsSource, /if \(isNew && !sessionIdRef\.current\)/);

@@ -14,6 +14,9 @@ const coalescersSource = await readFile(new URL("./agent-session/coalescers.ts",
 const scrollSource = await readFile(new URL("./agent-session/scroll.ts", import.meta.url), "utf8");
 const eventStreamSource = await readFile(new URL("./agent-session/event-stream.ts", import.meta.url), "utf8");
 const sessionLoaderSource = await readFile(new URL("./agent-session/session-loader.ts", import.meta.url), "utf8");
+const commandsSource = await readFile(new URL("./agent-session/commands.ts", import.meta.url), "utf8");
+const dispatcherSource = await readFile(new URL("./agent-session/event-dispatcher.ts", import.meta.url), "utf8");
+const newSessionFlowSource = await readFile(new URL("./agent-session/new-session.ts", import.meta.url), "utf8");
 
 test("keeps the session event stream open through the idle grace window", () => {
   const finishSource = eventStreamSource.slice(
@@ -24,25 +27,25 @@ test("keeps the session event stream open through the idle grace window", () => 
     eventStreamSource.indexOf("const scheduleEventStreamClose"),
     eventStreamSource.indexOf("const finishPromptWithoutStream"),
   );
-  const agentEndSource = source.slice(
-    source.indexOf('case "agent_end"'),
-    source.indexOf('case "agent_settled"'),
+  const agentEndSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "agent_end"'),
+    dispatcherSource.indexOf('case "agent_settled"'),
   );
-  const agentStartSource = source.slice(
-    source.indexOf('case "agent_start"'),
-    source.indexOf('case "agent_end"'),
+  const agentStartSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "agent_start"'),
+    dispatcherSource.indexOf('case "agent_end"'),
   );
-  const agentSettledSource = source.slice(
-    source.indexOf('case "agent_settled"'),
-    source.indexOf('case "prompt_done"'),
+  const agentSettledSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "agent_settled"'),
+    dispatcherSource.indexOf('case "prompt_done"'),
   );
-  const promptDoneSource = source.slice(
-    source.indexOf('case "prompt_done"'),
-    source.indexOf('case "prompt_error"'),
+  const promptDoneSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "prompt_done"'),
+    dispatcherSource.indexOf('case "prompt_error"'),
   );
-  const sendSource = source.slice(
-    source.indexOf("  const handleSend = useCallback"),
-    source.indexOf("  const executeBash = useCallback"),
+  const sendSource = commandsSource.slice(
+    commandsSource.indexOf("  const handleSend = useCallback"),
+    commandsSource.indexOf("  const executeBash = useCallback"),
   );
 
   assert.match(eventStreamSource, /const EVENT_STREAM_IDLE_GRACE_MS = 30_000/);
@@ -79,9 +82,9 @@ test("a rejected submission preserves a different run reported by the server", (
 });
 
 test("opening System lazily starts a dormant session without sending a prompt", () => {
-  const loadSystemPromptSource = source.slice(
-    source.indexOf("  const loadSystemPrompt = useCallback"),
-    source.indexOf("  const loadSlashCommands = useCallback"),
+  const loadSystemPromptSource = commandsSource.slice(
+    commandsSource.indexOf("  const loadSystemPrompt = useCallback"),
+    commandsSource.indexOf("  const loadSlashCommands = useCallback"),
   );
   const loaderEffectSource = source.slice(
     source.indexOf("  useEffect(() => {\n    onSystemPromptLoaderChange"),
@@ -107,9 +110,9 @@ test("opening System lazily starts a dormant session without sending a prompt", 
 });
 
 test("new-session promotion rekeys drafts before publishing the real session", () => {
-  const promoteSource = source.slice(
-    source.indexOf("  const promoteNewSession = useCallback"),
-    source.indexOf("  const ensureNewSession = useCallback"),
+  const promoteSource = newSessionFlowSource.slice(
+    newSessionFlowSource.indexOf("  const promoteNewSession = useCallback"),
+    newSessionFlowSource.indexOf("  const ensureNewSession = useCallback"),
   );
 
   assert.match(promoteSource, /draftKeyAliasesRef\.current\.set\(provisionalDraftKey, sid\)/);
@@ -123,17 +126,16 @@ test("new-session promotion rekeys drafts before publishing the real session", (
 });
 
 test("fresh sessions restore the preferred tool preset without overriding existing sessions", () => {
-  const preferenceSource = source.slice(
-    source.indexOf("  const setToolPresetState"),
-    source.indexOf("  const scrollToBottom"),
+  const preferenceSource = commandsSource.slice(
+    commandsSource.indexOf("  // Fresh sessions restore the persisted tool-preset"),
+    commandsSource.indexOf("  const resolveComposerDraftKey"),
   );
-  const loadToolsSource = source.slice(
-    source.indexOf("  const loadTools = useCallback"),
-    source.indexOf("  const promoteNewSession"),
+  const loadToolsSource = sessionLoaderSource.slice(
+    sessionLoaderSource.indexOf("  const loadTools = useCallback"),
+    sessionLoaderSource.indexOf("  return {"),
   );
-  const changeSource = source.slice(
-    source.indexOf("  const handleToolPresetChange = useCallback"),
-    source.indexOf("  const scrollUserMsgToTop"),
+  const changeSource = commandsSource.slice(
+    commandsSource.indexOf("  const handleToolPresetChange = useCallback"),
   );
 
   assert.match(
@@ -199,9 +201,9 @@ test("stale fresh-session completion cannot replace the active composer", () => 
 });
 
 test("abandoned fresh-session drafts are cleared and cannot be recreated by late rejection", () => {
-  const restoreSource = source.slice(
-    source.indexOf("  const restoreSubmission = useCallback"),
-    source.indexOf("  const sessionStats = useMemo"),
+  const restoreSource = commandsSource.slice(
+    commandsSource.indexOf("  const restoreSubmission = useCallback"),
+    commandsSource.indexOf("  // Opening the System panel is also allowed"),
   );
   const mountSource = source.slice(
     source.indexOf("  // Load session on mount"),
@@ -214,9 +216,9 @@ test("abandoned fresh-session drafts are cleared and cannot be recreated by late
 });
 
 test("streaming submissions cannot be stranded in an idle direct queue", () => {
-  const queueSource = source.slice(
-    source.indexOf("  // Let AgentSession.prompt decide atomically"),
-    source.indexOf("  const handleAbortCompaction"),
+  const queueSource = commandsSource.slice(
+    commandsSource.indexOf("  // Let AgentSession.prompt decide atomically"),
+    commandsSource.indexOf("  const handleAbortCompaction"),
   );
 
   assert.match(queueSource, /type: "prompt"/);
@@ -227,9 +229,9 @@ test("streaming submissions cannot be stranded in an idle direct queue", () => {
 });
 
 test("post-accept prompt errors do not duplicate the user submission", () => {
-  const promptErrorSource = source.slice(
-    source.indexOf('case "prompt_error"'),
-    source.indexOf('case "extension_error"'),
+  const promptErrorSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "prompt_error"'),
+    dispatcherSource.indexOf('case "extension_error"'),
   );
 
   assert.match(promptErrorSource, /addNotice/);
@@ -272,20 +274,21 @@ test("connects a selected session when another browser reports it running", () =
 });
 
 test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", () => {
-  const connectedSource = source.slice(
-    source.indexOf('case "connected"'),
-    source.indexOf('case "agent_start"'),
+  const connectedSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "connected"'),
+    dispatcherSource.indexOf('case "agent_start"'),
   );
-  const streamSource = source.slice(
-    source.indexOf('case "message_start"'),
-    source.indexOf('case "message_end"'),
+  const streamSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "message_start"'),
+    dispatcherSource.indexOf('case "message_end"'),
   );
-  const messageEndSource = source.slice(
-    source.indexOf('case "message_end"'),
-    source.indexOf('case "tool_execution_start"'),
+  const messageEndSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "message_end"'),
+    dispatcherSource.indexOf('case "tool_execution_start"'),
   );
 
-  assert.match(source, /streamReducer,[\s\S]*type ClientAssistantMessageEvent/);
+  assert.match(source, /streamReducer,/);
+  assert.match(coalescersSource, /ClientAssistantMessageEvent/);
   assert.doesNotMatch(source, /streamingMessageRef/);
   assert.match(connectedSource, /dispatch\(\{ type: "end" \}\)/);
   assert.match(connectedSource, /event\.isStreaming === true/);
@@ -305,9 +308,9 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
 });
 
 test("shows the latest streamed tool execution progress in the running phase", () => {
-  const updateSource = source.slice(
-    source.indexOf('case "tool_execution_update"'),
-    source.indexOf('case "tool_execution_end"'),
+  const updateSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "tool_execution_update"'),
+    dispatcherSource.indexOf('case "tool_execution_end"'),
   );
 
   assert.match(updateSource, /getToolExecutionProgress\(event\.partialResult\)/);
@@ -358,9 +361,9 @@ test("routes blocking extension requests through deduplicated browser attention 
 });
 
 test("keeps live following cancellable when the user scrolls away from the tail", () => {
-  const streamUpdateSource = source.slice(
-    source.indexOf('case "message_start"'),
-    source.indexOf('case "message_end"'),
+  const streamUpdateSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "message_start"'),
+    dispatcherSource.indexOf('case "message_end"'),
   );
   const scrollHandlerSource = scrollSource.slice(
     scrollSource.indexOf("const handleScrollPositionChange"),
@@ -384,9 +387,9 @@ test("keeps live following cancellable when the user scrolls away from the tail"
 });
 
 test("keeps a newly sent user message at the top while its response starts", () => {
-  const streamUpdateSource = source.slice(
-    source.indexOf('case "message_start"'),
-    source.indexOf('case "message_end"'),
+  const streamUpdateSource = dispatcherSource.slice(
+    dispatcherSource.indexOf('case "message_start"'),
+    dispatcherSource.indexOf('case "message_end"'),
   );
   const userScrollSource = scrollSource.slice(
     scrollSource.indexOf("const scrollUserMsgToTop"),
@@ -398,7 +401,7 @@ test("keeps a newly sent user message at the top while its response starts", () 
 
   assert.match(streamUpdateSource, /!pendingScrollToUserRef\.current && isNearBottomRef\.current/);
   assert.match(scrollSource, /const \[promptAnchorActive, setPromptAnchorActive\] = useState\(false\)/);
-  assert.match(source, /pendingScrollToUserRef\.current = true;\s*setPromptAnchorActive\(true\)/);
+  assert.match(commandsSource, /pendingScrollToUserRef\.current = true;\s*setPromptAnchorActive\(true\)/);
   assert.match(userScrollSource, /const targetTop = Math\.min\(Math\.max\(0, elAbsTop - 16\), maxScrollTop\)/);
   assert.match(userScrollSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
   assert.match(userScrollSource, /isNearBottomRef\.current = true/);
@@ -465,9 +468,9 @@ test("keeps a detached viewport in place when streaming completes", () => {
   assert.match(scrollSource, /addEventListener\("scroll", handleScrollPositionChange/);
 });
 test("routes the builtin /model command through get_state and set_model", () => {
-  const slashSource = source.slice(
-    source.indexOf("const handleBuiltinSlashCommand = useCallback"),
-    source.indexOf("// Let AgentSession.prompt decide"),
+  const slashSource = commandsSource.slice(
+    commandsSource.indexOf("const handleBuiltinSlashCommand = useCallback"),
+    commandsSource.indexOf("// Let AgentSession.prompt decide"),
   );
   const modelSource = slashSource.slice(
     slashSource.indexOf('case "model":'),
@@ -479,9 +482,9 @@ test("routes the builtin /model command through get_state and set_model", () => 
 });
 
 test("forwards TUI-rename/reload-plugins through the OMP prompt path", () => {
-  const slashSource = source.slice(
-    source.indexOf("const handleBuiltinSlashCommand = useCallback"),
-    source.indexOf("// Let AgentSession.prompt decide"),
+  const slashSource = commandsSource.slice(
+    commandsSource.indexOf("const handleBuiltinSlashCommand = useCallback"),
+    commandsSource.indexOf("// Let AgentSession.prompt decide"),
   );
   // /reload and /name were removed (not TUI commands); /rename and
   // /reload-plugins live in the OMP-executable forward list.
@@ -493,9 +496,9 @@ test("forwards TUI-rename/reload-plugins through the OMP prompt path", () => {
 });
 
 test("rejects unmapped slash commands with an explicit error", () => {
-  const slashSource = source.slice(
-    source.indexOf("const handleBuiltinSlashCommand = useCallback"),
-    source.indexOf("// Let AgentSession.prompt decide"),
+  const slashSource = commandsSource.slice(
+    commandsSource.indexOf("const handleBuiltinSlashCommand = useCallback"),
+    commandsSource.indexOf("// Let AgentSession.prompt decide"),
   );
   const defaultSource = slashSource.slice(
     slashSource.indexOf("default: {"),

@@ -197,7 +197,22 @@ must stay honest in the UI — they are not implemented in OMP RPC mode:
 
 `hooks/`:
 ```
-  useAgentSession.ts   messages + streaming + SSE + fork/navigate/reconciliation logic
+  useAgentSession.ts   composition root: owns options parsing, session identity
+                       refs and facade state; composes the agent-session/*
+                       modules below and re-exports the same public API
+  agent-session/       extracted useAgentSession internals (one concern each):
+    types.ts             shared types (SessionData, AgentPhase, options, ...)
+    notices.ts           useNotices — notice reducer + timers + addNotice
+    extension-ui.ts      useExtensionUi — extension dialogs/status/widgets/title
+    coalescers.ts        useDeltaCoalescer / useAgentPhase / useSubagents (rAF batching)
+    scroll.ts            useChatScroll — bottom-follow + prompt-anchor scrolling
+    session-loader.ts    useSessionLoader — loadSession/loadContext/loadTools
+    event-stream.ts      useEventStream — SSE connection, idle grace, run state
+                         machine (settle/finish/waitForSettlement/reconcile)
+    models.ts            useSessionModels — model list + thinking level state
+    new-session.ts       useNewSessionFlow — ensureNewSession + draft promotion
+    commands.ts          useAgentCommands — send/bash/fork/navigate/model/slash/...
+    event-dispatcher.ts  useEventDispatcher — the agent event switch
   useAudio.ts          completion sound + browser AudioContext unlock
   useDragDrop.ts       shared drag/drop state
   useI18n.tsx          i18n registry + locale switching
