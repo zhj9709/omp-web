@@ -1383,11 +1383,22 @@ span.token.table {
 .panel-resize-handle.is-resizing::after {
   background: color-mix(in srgb, var(--text-muted) 70%, var(--border));
 }
+/* Sidebar handle: 8px hit strip riding the sidebar's right border */
+.sidebar-resize-handle {
+  width: 8px;
+  margin: 0 -4px;
+  flex: 0 0 8px;
+}
+.sidebar-resize-handle::after {
+  left: 3px;
+}
 .right-panel-overlay-backdrop {
   display: none;
 }
 
-/* Desktop sidebar: animate width */
+/* Desktop sidebar: animate width. Rail collapse is three-phase — the content
+ * fades in place at its frozen expanded width while the column track slides to
+ * 56px (cropping it), then the rail layout mounts with a rail-in entrance. */
 @media (min-width: 641px) {
   .sidebar-overlay-backdrop {
     display: none !important;
@@ -1395,25 +1406,107 @@ span.token.table {
   .sidebar-container {
     position: relative;
     overflow: hidden;
-    transition: width 0.2s ease, min-width 0.2s ease;
+    transition:
+      width var(--ds-duration-slow) var(--ds-ease-in-out),
+      min-width var(--ds-duration-slow) var(--ds-ease-in-out);
   }
   .sidebar-container.sidebar-open {
-    width: var(--sidebar-width, 260px);
-    min-width: var(--sidebar-width, 260px);
+    width: var(--sidebar-width, 280px);
+    min-width: var(--sidebar-width, 280px);
   }
   .sidebar-container.sidebar-closed {
     width: 0;
     min-width: 0;
     border-right: none !important;
   }
-  /* keep inner content at fixed width so it doesn't reflow during animation */
+  /* keep inner content at the frozen expanded width so it doesn't reflow
+   * while the column track animates */
   .sidebar-container > * {
-    width: var(--sidebar-width, 260px);
-    min-width: var(--sidebar-width, 260px);
+    width: var(--sidebar-freeze-width, var(--sidebar-width, 280px));
+    min-width: var(--sidebar-freeze-width, var(--sidebar-width, 280px));
+  }
+  .sidebar-container.sidebar-rail > * {
+    width: 100%;
+    min-width: 0;
   }
   .sidebar-container.sidebar-resizing,
   .sidebar-container.sidebar-resizing > * {
     transition: none !important;
+  }
+
+  /* phase 1: content fades out in place (150ms) while the track slides */
+  .sidebar-container.rail-collapsing > * {
+    opacity: 0;
+    transition: opacity 150ms var(--ds-ease-in-out);
+  }
+  /* phase 3 (expand): remounted content fades in while the track widens */
+  .sidebar-container.rail-expanding > * {
+    animation: rail-wide-in 200ms var(--ds-ease-in-out) backwards;
+  }
+}
+
+@keyframes rail-in {
+  from { opacity: 0; transform: translateX(49px); }
+}
+@keyframes rail-wide-in {
+  from { opacity: 0; }
+}
+
+/* 56px rail layout (collapsed sidebar) */
+.sidebar-rail-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  padding: 18px 10px 6px;
+  box-sizing: border-box;
+  gap: 10px;
+  color: var(--alias-label-primary);
+}
+.sidebar-rail-content.rail-appear > * {
+  animation: rail-in 150ms var(--ds-ease-in-out) backwards;
+}
+.sidebar-rail-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--alias-label-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.sidebar-rail-button:hover {
+  background: var(--alias-interactive-bg-hover);
+}
+/* rail logo: brand mark at rest, panel (expand) icon on hover */
+.sidebar-rail-toggle .rail-panel-icon { display: none; }
+.sidebar-rail-toggle:hover .rail-panel-icon { display: block; }
+.sidebar-rail-toggle:hover .rail-mark { display: none; }
+.sidebar-rail-mark {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--alias-label-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-container,
+  .sidebar-container > * {
+    transition: none !important;
+  }
+  .sidebar-container.rail-collapsing > * {
+    opacity: 1;
+  }
+  .sidebar-container.rail-expanding > *,
+  .sidebar-rail-content.rail-appear > * {
+    animation: none;
   }
 }
 

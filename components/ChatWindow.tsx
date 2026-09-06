@@ -16,6 +16,13 @@ import { GoalChip } from "./GoalChip";
 import { chatColumnWidth, useChatWidthPct } from "@/lib/chat-width-preference";
 import { countTodos, type TodoPhase } from "@/lib/todos";
 import { useI18n } from "@/hooks/useI18n";
+import { createPortal } from "react-dom";
+import { getFileName } from "@/lib/file-paths";
+import { workspaceKeyOf } from "@/lib/workspace-memory";
+import type { PinnedProject } from "@/lib/pinned-projects";
+import { menuPositionFrom, useDismissableMenu } from "@/lib/row-menu";
+import { DirectoryPicker } from "./DirectoryPicker";
+import sidebarStyles from "./SessionSidebar.module.css";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -81,6 +88,8 @@ interface Props {
   sessionRunning?: boolean;
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
+  /** Re-target the current new-session draft to another project (hero picker). */
+  onChangeNewSessionCwd?: (cwd: string) => void;
   onAgentEnd?: () => void;
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
@@ -359,11 +368,87 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onOpenNewSession, onOpenPlugins, onOpenCollab, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onChangeNewSessionCwd, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onOpenNewSession, onOpenPlugins, onOpenCollab, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const [chatWidthPct] = useChatWidthPct();
   const chatColumnMax = chatColumnWidth(chatWidthPct);
   const isMobile = useIsMobile();
+
+  // Hero workspace picker (dsh WorkspacePickFlow): on the new-session page the
+  // draft's project is a button that opens a project menu; picking one
+  // re-targets the draft via onChangeNewSessionCwd. The project list is
+  // fetched once when the menu opens.
+  const [cwdPickerOpen, setCwdPickerOpen] = useState(false);
+  const [cwdPickerPos, setCwdPickerPos] = useState<{ top: number; left: number } | null>(null);
+  const [cwdProjects, setCwdProjects] = useState<Array<{ key: string; root: string }> | null>(null);
+  const cwdButtonRef = useRef<HTMLButtonElement | null>(null);
+  const cwdMenuRef = useRef<HTMLDivElement | null>(null);
+  const closeCwdPicker = useCallback(() => setCwdPickerOpen(false), []);
+  useDismissableMenu(cwdPickerOpen, closeCwdPicker, cwdMenuRef, cwdButtonRef);
+  const openCwdPicker = useCallback(() => {
+    if (cwdButtonRef.current) setCwdPickerPos(menuPositionFrom(cwdButtonRef.current));
+    setCwdPickerOpen(true);
+    setCwdProjects(null);
+    // Closed projects (hidden in the sidebar) must not appear in the picker,
+    // and pinned-but-sessionless projects (added via "open project") must.
+    const prefsPromise = fetch("/api/preferences/pinned-projects", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ projects?: PinnedProject[]; closedProjects?: string[] }>) : null))
+      .then((d) => ({
+        closed: new Set(d?.closedProjects ?? []),
+        projects: d?.projects ?? [],
+      }))
+      .catch(() => ({ closed: new Set<string>(), projects: [] as PinnedProject[] }));
+    void Promise.all([
+      fetch("/api/sessions", { cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<{ sessions?: SessionInfo[] }>) : null)),
+      prefsPromise,
+    ])
+      .then(([d, prefs]) => {
+        const groups = new Map<string, { key: string; root: string }>();
+        for (const s of d?.sessions ?? []) {
+          const key = workspaceKeyOf(s);
+          if (prefs.closed.has(key) || groups.has(key)) continue;
+          groups.set(key, { key, root: s.projectRoot ?? s.cwd });
+        }
+        // Pinned projects with no sessions yet still belong in the list.
+        for (const p of prefs.projects) {
+          if (!prefs.closed.has(p.key) && !groups.has(p.key)) {
+            groups.set(p.key, { key: p.key, root: p.root });
+          }
+        }
+        setCwdProjects([...groups.values()]);
+      })
+      .catch(() => setCwdProjects([]));
+  }, []);
+
+  // "Add project…" — opens the directory browser for a workspace that has no
+  // sessions yet; the validated path becomes the draft's target.
+  const [cwdBrowseOpen, setCwdBrowseOpen] = useState(false);
+  const [cwdBrowseBusy, setCwdBrowseBusy] = useState(false);
+  const [cwdBrowseError, setCwdBrowseError] = useState<string | null>(null);
+  const handleCwdBrowseSelect = useCallback(async (path: string) => {
+    if (cwdBrowseBusy) return;
+    setCwdBrowseBusy(true);
+    setCwdBrowseError(null);
+    try {
+      const res = await fetch("/api/cwd/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: path }),
+      });
+      const data = await res.json().catch(() => ({})) as { cwd?: string; error?: string };
+      if (!res.ok || data.error || !data.cwd) {
+        setCwdBrowseError(data.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setCwdBrowseOpen(false);
+      onChangeNewSessionCwd?.(data.cwd);
+    } catch (e) {
+      setCwdBrowseError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCwdBrowseBusy(false);
+    }
+  }, [cwdBrowseBusy, onChangeNewSessionCwd]);
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
@@ -1404,6 +1489,7 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
       </div>
 
       {isEmptyNew ? (
+        <>
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
           <div className="w-full" style={{ maxWidth: chatColumnMax }}>
             <div
@@ -1423,19 +1509,32 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
                 <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>OMP Web</span>
                 <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
                 {newSessionCwd && (
-                  <span
+                  <button
+                    ref={cwdButtonRef}
+                    type="button"
                     title={newSessionCwd}
+                    onClick={cwdPickerOpen ? closeCwdPicker : openCwdPicker}
                     style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
                       fontSize: 11,
                       color: "var(--text-dim)",
                       fontFamily: "var(--font-mono)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      cursor: "pointer",
+                      minWidth: 0,
                     }}
                   >
-                    {t("chat.newSessionTarget", { cwd: newSessionCwd })}
-                  </span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {t("chat.newSessionTarget", { cwd: newSessionCwd })}
+                    </span>
+                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <polyline points="2 3.5 5 6.5 8 3.5" />
+                    </svg>
+                  </button>
                 )}
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
@@ -1451,6 +1550,73 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
             <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
           </div>
         </div>
+        {cwdPickerOpen && cwdPickerPos && createPortal(
+          <div
+            ref={cwdMenuRef}
+            role="menu"
+            className={sidebarStyles.sessionMenu}
+            style={{ top: cwdPickerPos.top, left: cwdPickerPos.left }}
+          >
+            {cwdProjects === null ? (
+              <div style={{ padding: "6px 10px", fontSize: 12, color: "var(--text-dim)" }}>{t("sidebar.loading")}</div>
+            ) : cwdProjects.length === 0 ? (
+              <div style={{ padding: "6px 10px", fontSize: 12, color: "var(--text-dim)" }}>{t("sidebar.noProjects")}</div>
+            ) : (
+              <div className={sidebarStyles.sessionMenuScroller}>
+              {cwdProjects.map((p) => {
+                // Compare separator/case-insensitively: the draft cwd and the
+                // sessions' projectRoot can disagree on both.
+                const norm = (v: string) => v.replace(/[\\/]+/g, "/").replace(/\/$/, "").toLowerCase();
+                const current = newSessionCwd != null && norm(newSessionCwd) === norm(p.root);
+                return (
+                  <button
+                    key={p.key}
+                    type="button"
+                    role="menuitem"
+                    className={sidebarStyles.sessionMenuItem}
+                    title={p.root}
+                    onClick={() => { setCwdPickerOpen(false); onChangeNewSessionCwd?.(p.root); }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    </svg>
+                    <span className={sidebarStyles.sessionMenuItemLabel}>{getFileName(p.root)}</span>
+                    {current && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    )}
+                  </button>
+                );
+              })}
+              </div>
+            )}
+            <div className={sidebarStyles.sessionMenuDivider} />
+            <button
+              type="button"
+              role="menuitem"
+              className={sidebarStyles.sessionMenuItem}
+              onClick={() => { setCwdPickerOpen(false); setCwdBrowseError(null); setCwdBrowseOpen(true); }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <line x1="12" y1="11" x2="12" y2="17" />
+                <line x1="9" y1="14" x2="15" y2="14" />
+              </svg>
+              <span className={sidebarStyles.sessionMenuItemLabel}>{t("sidebar.addProject")}</span>
+            </button>
+          </div>,
+          document.body,
+        )}
+        {cwdBrowseOpen && (
+          <DirectoryPicker
+            busy={cwdBrowseBusy}
+            error={cwdBrowseError}
+            onCancel={() => setCwdBrowseOpen(false)}
+            onSelect={(path) => void handleCwdBrowseSelect(path)}
+          />
+        )}
+        </>
       ) : (
       <>
 

@@ -1,9 +1,15 @@
 export const MOBILE_MAX_WIDTH = 640;
 export const SPLIT_PANEL_MIN_WIDTH = 960;
 
-export const SIDEBAR_DEFAULT_WIDTH = 260;
-export const SIDEBAR_MIN_WIDTH = 180;
-export const SIDEBAR_MAX_WIDTH = 480;
+export const SIDEBAR_DEFAULT_WIDTH = 280;
+export const SIDEBAR_MIN_WIDTH = 264;
+export const SIDEBAR_MAX_WIDTH = 420;
+/** Icon-rail width when the sidebar is collapsed on desktop (dsh-style). */
+export const SIDEBAR_COLLAPSED_WIDTH = 56;
+/** Width of the column track during the rail collapse/expand animations. */
+export const SIDEBAR_RAIL_ANIMATION_MS = 300;
+/** Content fade duration during the first collapse phase. */
+export const SIDEBAR_RAIL_FADE_MS = 150;
 
 export const RIGHT_PANEL_FALLBACK_WIDTH = 560;
 export const RIGHT_PANEL_MIN_WIDTH = 300;

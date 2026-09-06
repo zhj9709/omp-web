@@ -1,0 +1,70 @@
+/*
+ * Sidebar design tokens (dsh-style, three-layer: static → specific → alias).
+ * Components only consume --alias-*; themes switch in the alias layer.
+ * Scoped to the sidebar so the rest of the app keeps using globals.css tokens.
+ */
+
+:root {
+  /* Base palette: neutral-bluish */
+  --static-00: rgb(255, 255, 255);
+  --static-50: rgb(249, 250, 251);
+  --static-60: rgb(245, 246, 247);
+  --static-75: rgb(241, 243, 245);
+  --static-100: rgb(235, 238, 242);
+  --static-150: rgb(233, 236, 242);
+  --static-200: rgb(225, 229, 238);
+  --static-300: rgb(207, 211, 214);
+  --static-400: rgb(173, 178, 184);
+  --static-500: rgb(151, 157, 166);
+  --static-600: rgb(129, 133, 140);
+  --static-700: rgb(97, 102, 107);
+  --static-750: rgb(67, 69, 74);
+  --static-800: rgb(53, 54, 56);
+  --static-850: rgb(44, 44, 46);
+  --static-875: rgb(35, 35, 36);
+  --static-900: rgb(27, 27, 28);
+  --static-950: rgb(21, 21, 23);
+  --static-1000: rgb(15, 17, 21);
+
+  /* Semantic layer */
+  --specific-sidebar-fill: var(--static-50);
+
+  /* Alias layer (component-facing) */
+  --alias-bg-base: var(--static-00);
+  --alias-label-primary: var(--static-1000);
+  --alias-label-secondary: var(--static-700);
+  --alias-label-tertiary: var(--static-600);
+  --alias-label-caption: var(--static-400);
+  --alias-border-l3: rgba(0, 0, 0, 0.12);
+  --alias-interactive-bg-hover: rgba(38, 49, 72, 0.06);
+  --alias-interactive-bg-hover-accent: rgba(38, 49, 72, 0.14);
+  --alias-interactive-bg-active: rgba(38, 49, 72, 0.1);
+  --alias-button-elevated-fill: var(--static-00);
+  --alias-button-floating-fill: var(--static-00);
+  --alias-button-floating-hover: var(--static-75);
+  --alias-scrollbar-thumb: rgba(0, 0, 0, 0.22);
+
+  /* Motion */
+  --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ds-duration-fast: 0.1s;
+  --ds-duration: 0.2s;
+  --ds-duration-slow: 0.3s;
+}
+
+html.dark {
+  --specific-sidebar-fill: var(--static-900);
+
+  --alias-bg-base: var(--static-950);
+  --alias-label-primary: var(--static-50);
+  --alias-label-secondary: var(--static-300);
+  --alias-label-tertiary: var(--static-400);
+  --alias-label-caption: var(--static-600);
+  --alias-border-l3: rgba(255, 255, 255, 0.12);
+  --alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
+  --alias-interactive-bg-hover-accent: rgba(255, 255, 255, 0.16);
+  --alias-interactive-bg-active: rgba(255, 255, 255, 0.12);
+  --alias-button-elevated-fill: var(--static-850);
+  --alias-button-floating-fill: var(--static-850);
+  --alias-button-floating-hover: var(--static-800);
+  --alias-scrollbar-thumb: rgba(255, 255, 255, 0.25);
+}

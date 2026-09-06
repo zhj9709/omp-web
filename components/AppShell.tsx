@@ -32,7 +32,6 @@ import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
-import { samePath } from "@/lib/paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
   claimExtensionAttentionNotification,
@@ -41,8 +40,6 @@ import {
 } from "@/lib/browser-notifications";
 import { getInitialNavigation } from "@/lib/initial-navigation";
 import {
-  clearLastOpen,
-  getLastOpenSession,
   setLastOpenSession,
   workspaceKeyOf,
 } from "@/lib/workspace-memory";
@@ -53,9 +50,12 @@ import {
   RIGHT_PANEL_FALLBACK_WIDTH,
   RIGHT_PANEL_MAX_WIDTH,
   RIGHT_PANEL_MIN_WIDTH,
+  SIDEBAR_COLLAPSED_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  SIDEBAR_RAIL_ANIMATION_MS,
+  SIDEBAR_RAIL_FADE_MS,
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ProjectTrustStatus } from "@/lib/api-types";
@@ -65,6 +65,7 @@ import type { FileViewerState } from "@/lib/file-viewer-state";
 
 type SessionCopyField = "file" | "id";
 const LANGUAGE_MENU_WIDTH = 176;
+const SIDEBAR_RAIL_STORAGE_KEY = "omp-web:sidebar-rail";
 
 export function AppShell() {
   const router = useRouter();
@@ -117,6 +118,15 @@ export function AppShell() {
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
   const [projectTrustError, setProjectTrustError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Desktop rail collapse: expanded ⇄ 56px icon strip. The phases drive the
+  // three-phase animation (content fade → track slide → rail-in entrance).
+  // Mobile keeps the overlay drawer via sidebarOpen and never enters a rail
+  // phase. Only "expanded" and "rail" are rest states.
+  const [railPhase, setRailPhase] = useState<"expanded" | "collapsing" | "rail" | "expanding">("expanded");
+  const railTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** True in every phase where the column track is at (or heading to) 56px. */
+  const railCollapsed = railPhase === "rail" || railPhase === "collapsing";
+  const railActive = railPhase === "rail";
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
@@ -143,10 +153,10 @@ export function AppShell() {
       ? RIGHT_PANEL_MAX_WIDTH
       : getRightPanelMaxWidth({
         viewportWidth: window.innerWidth,
-        sidebarOpen,
-        sidebarWidth: sidebarWidthRef.current,
+        sidebarOpen: isMobile ? sidebarOpen : true,
+        sidebarWidth: railCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidthRef.current,
       }),
-    [sidebarOpen],
+    [sidebarOpen, isMobile, railCollapsed],
   );
   const sidebarResizer = useResizablePanel({
     ariaLabel: translate("layout.resizeSidebar"),
@@ -186,6 +196,68 @@ export function AppShell() {
     reclampSidebarWidth();
     reclampRightPanelWidth();
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
+
+  // Restore the persisted rail preference after hydration (no animation — the
+  // first paint lands directly in the rail state).
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(SIDEBAR_RAIL_STORAGE_KEY) === "1") setRailPhase("rail");
+    } catch {
+      // ignore storage quota / privacy-mode errors
+    }
+  }, []);
+  // The rail is a desktop concept; leaving the desktop breakpoint settles the
+  // phase back to expanded so the mobile overlay drawer renders normally.
+  useEffect(() => {
+    if (!isMobile || railPhase === "expanded") return;
+    if (railTimerRef.current) {
+      clearTimeout(railTimerRef.current);
+      railTimerRef.current = null;
+    }
+    setRailPhase("expanded");
+  }, [isMobile, railPhase]);
+  useEffect(() => () => {
+    if (railTimerRef.current) clearTimeout(railTimerRef.current);
+  }, []);
+
+  const persistRailCollapsed = useCallback((collapsed: boolean) => {
+    try {
+      if (collapsed) window.localStorage.setItem(SIDEBAR_RAIL_STORAGE_KEY, "1");
+      else window.localStorage.removeItem(SIDEBAR_RAIL_STORAGE_KEY);
+    } catch {
+      // ignore storage quota / privacy-mode errors
+    }
+  }, []);
+
+  const toggleRail = useCallback(() => {
+    if (railTimerRef.current) {
+      clearTimeout(railTimerRef.current);
+      railTimerRef.current = null;
+    }
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (railPhase === "expanded") {
+      persistRailCollapsed(true);
+      if (reducedMotion) {
+        setRailPhase("rail");
+        return;
+      }
+      // Phase 1+2: content fades in place (150ms) while the track slides to
+      // the rail width (300ms), then the rail layout mounts.
+      setRailPhase("collapsing");
+      railTimerRef.current = setTimeout(() => setRailPhase("rail"), SIDEBAR_RAIL_FADE_MS);
+    } else if (railPhase === "rail") {
+      persistRailCollapsed(false);
+      if (reducedMotion) {
+        setRailPhase("expanded");
+        return;
+      }
+      setRailPhase("expanding");
+      railTimerRef.current = setTimeout(() => setRailPhase("expanded"), SIDEBAR_RAIL_ANIMATION_MS);
+    } else {
+      // Toggled mid-animation — settle immediately at the pending target.
+      setRailPhase(railPhase === "collapsing" ? "rail" : "expanded");
+    }
+  }, [railPhase, persistRailCollapsed]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const mobileToolbarRef = useRef<HTMLDivElement>(null);
@@ -296,9 +368,12 @@ export function AppShell() {
     if (isMobile) {
       setActiveTopPanel(null);
       setMobileToolbarMoreOpen(false);
+      setSidebarOpen((open) => !open);
+    } else {
+      // Desktop collapse is the dsh-style 56px rail, not hide-to-zero.
+      toggleRail();
     }
-    setSidebarOpen((open) => !open);
-  }, [isMobile]);
+  }, [isMobile, toggleRail]);
 
   const handleMobileToolbarMoreToggle = useCallback(() => {
     setSidebarOpen(false);
@@ -396,27 +471,19 @@ export function AppShell() {
   }, [isMobile]);
 
   const initialSessionId = initialNavigation.sessionId;
-  const [activeCwd, setActiveCwd] = useState<string | null>(null);
-  const activeProjectKeyRef = useRef<string | null>(null);
+  // The effective working directory for new-session targets, the file explorer,
+  // and the window title. Derived from the selected session (or an in-progress
+  // new-session draft) — there is no longer a separate "active project" pointer
+  // because all projects are visible simultaneously in the sidebar tree.
+  const activeCwd = selectedSession?.cwd ?? newSessionCwd ?? null;
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
-  // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
-  const suppressCwdBumpRef = useRef(false);
-  // Guards the async workspace restore so a slow response from an earlier
-  // switch cannot resurrect a session into a project the user already left.
-  const workspaceRestoreTokenRef = useRef(0);
-
-  const invalidateWorkspaceRestore = useCallback(() => {
-    workspaceRestoreTokenRef.current += 1;
-  }, []);
 
   // Persist every active-session transition, including new and forked sessions
-  // that bypass the sidebar selection handler. Transient sessions do not yet
-  // carry projectKey, so use the active project identity until hydration.
+  // that bypass the sidebar selection handler.
   useEffect(() => {
     if (!selectedSession) return;
     const projectKey = selectedSession.projectKey
-      ?? activeProjectKeyRef.current
       ?? workspaceKeyOf(selectedSession);
     setLastOpenSession(projectKey, selectedSession.id);
   }, [selectedSession]);
@@ -441,9 +508,6 @@ export function AppShell() {
           throw new Error(data.error ?? `HTTP ${response.status}`);
         }
 
-        // The sidebar will notify us when it adopts this cwd. Avoid remounting
-        // the just-created empty chat during that initial synchronization.
-        suppressCwdBumpRef.current = true;
         const draftId = `initial:${requestedCwd}`;
         setNewSessionDraftId(draftId);
         activeNewSessionDraftKeyRef.current = `new:${draftId}:${data.cwd}`;
@@ -459,118 +523,10 @@ export function AppShell() {
     return () => controller.abort();
   }, [initialNavigation]);
 
-  // Restore the workspace's last open session after switching to it. Called
-  // from handleCwdChange once the outgoing context has been reset. The session
-  // is looked up against the live list so a deleted or drifted session falls
-  // back to the default welcome page instead of erroring.
-  const restoreWorkspaceContext = useCallback((projectKey: string) => {
-    const token = ++workspaceRestoreTokenRef.current;
-    const lastOpenSessionId = getLastOpenSession(projectKey);
-    if (!lastOpenSessionId) return;
-    void fetch("/api/sessions")
-      .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
-      .then((d) => {
-        if (token !== workspaceRestoreTokenRef.current) return; // stale switch
-        const s = d?.sessions.find((x) => x.id === lastOpenSessionId);
-        if (!s) {
-          // The list loaded but the remembered session is gone — forget it.
-          // When the list itself failed (d === null) keep the memory so a
-          // later switch retries the restore.
-          if (d) clearLastOpen(projectKey);
-          return;
-        }
-        if (workspaceKeyOf(s) !== projectKey) {
-          // Defensive: the remembered session drifted out of this workspace.
-          clearLastOpen(projectKey);
-          return;
-        }
-        // Selecting the session must remount the chat with the session
-        // present: useAgentSession loads content in a mount-only effect, so
-        // the null-session welcome mount from the switch would never load
-        // the restored session's messages.
-        setSelectedSession(s);
-        setSessionKey((k) => k + 1);
-        if (new URLSearchParams(window.location.search).get("session") !== s.id) {
-          router.replace(`?session=${encodeURIComponent(s.id)}`, { scroll: false });
-        }
-      })
-      .catch(() => {
-        // Network hiccup: keep the remembered session for a later retry.
-      });
-  }, [router]);
-
-  const handleCwdChange = useCallback((
-    cwd: string | null,
-    projectRoot?: string | null,
-    projectKey?: string | null,
-  ) => {
-    invalidateWorkspaceRestore();
-    const currentFreshCwd = newSessionCwd ?? activeCwd;
-    setActiveCwd(cwd);
-    // A draft composer must never outlive the project it targets: if the user
-    // has selected a different project, drop the stale draft so the next
-    // message cannot land in a project other than the visible one.
-    if (cwd && newSessionCwd && !samePath(newSessionCwd, cwd)) {
-      setNewSessionCwd(null);
-    }
-    // Skip if cwd is null (initial mount).
-    if (!cwd) return;
-    const newProject = projectKey ?? projectRoot ?? cwd;
-    const currentProject = activeProjectKeyRef.current
-      ?? (selectedSession ? workspaceKeyOf(selectedSession) : null);
-    activeProjectKeyRef.current = newProject;
-
-    // Keep the project identity in sync during the initial URL restore without
-    // remounting the just-created or restored chat.
-    if (suppressCwdBumpRef.current) {
-      suppressCwdBumpRef.current = false;
-      return;
-    }
-    // The server may hydrate a normalized key after a custom cwd is already
-    // active. Updating identity for the exact same cwd is not a user switch.
-    if (currentFreshCwd === cwd && currentProject !== newProject) return;
-    // Existing sessions stay open when the worktree selector moves within the
-    // same project. A fresh composer must remount when its effective cwd moves,
-    // otherwise its already-created runtime would keep sending to the old cwd.
-    if (
-      currentProject === newProject
-      && (selectedSession !== null || currentFreshCwd === cwd)
-    ) {
-      return;
-    }
-    // Close any session that belongs to a different project — it no longer
-    // matches the selected project directory.
-    const draftId = typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    setNewSessionDraftId(draftId);
-    activeNewSessionDraftKeyRef.current = `new:${draftId}:${cwd}`;
-    setSelectedSession(null);
-    setNewSessionCwd((prev) => {
-      if (prev && prev !== cwd) return null;
-      return prev;
-    });
-    setSessionKey((k) => k + 1);
-    setBranchTree([]);
-    setBranchActiveLeafId(null);
-    setSystemPrompt(null);
-    setSystemPromptLoading(false);
-    setActiveTopPanel(null);
-    if (currentProject !== newProject) {
-      // File tabs are keyed by absolute path, so tabs opened in the previous
-      // project must not linger. Same-project worktree switches keep them.
-      setFileTabs([]);
-      setActiveFileTabId(null);
-      setRightPanelOpen(false);
-      // Restore the workspace we switched to: its last open session, or keep
-      // the default welcome page when none is remembered.
-      restoreWorkspaceContext(newProject);
-    }
-    router.replace("/", { scroll: false });
-  }, [activeCwd, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
-
+  // All projects are visible simultaneously in the sidebar tree, so there is no
+  // "switch project" side effect here — selecting a session just opens it
+  // (including across projects). The chat remounts via sessionKey.
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
-    invalidateWorkspaceRestore();
     activeNewSessionDraftKeyRef.current = null;
     // Re-clicking the already-open session must not remount the chat and
     // re-run the full load/positioning cycle. Only skip when the effective
@@ -592,20 +548,14 @@ export function AppShell() {
     setInitialSessionRestored(true);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick.
     if (isMobile && !isRestore) setSidebarOpen(false);
-    if (isRestore) {
-      // Suppress the redundant sessionKey bump that would come from the
-      // onCwdChange effect firing after setSelectedCwd in the sidebar
-      suppressCwdBumpRef.current = true;
-    }
     // Skip router.replace when restoring from URL — the param is already correct
     // and calling replace in production Next.js triggers a Suspense remount loop
     if (!isRestore) {
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [invalidateWorkspaceRestore, router, isMobile, selectedSession]);
+  }, [router, isMobile, selectedSession]);
 
   const handleNewSession = useCallback((sessionId: string, cwd: string) => {
-    invalidateWorkspaceRestore();
     const draftKey = `new:${sessionId}:${cwd}`;
     activeNewSessionDraftKeyRef.current = draftKey;
     setNewSessionDraftId(sessionId);
@@ -619,7 +569,7 @@ export function AppShell() {
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
     router.replace("/", { scroll: false });
-  }, [invalidateWorkspaceRestore, router, isMobile]);
+  }, [router, isMobile]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N, Cmd/Ctrl+K etc.)
   useGlobalKeyboardShortcuts({
@@ -629,9 +579,8 @@ export function AppShell() {
   });
 
   // Client-built transient SessionInfo (new session / fork) lacks the
-  // server-computed projectKey, which the same-project check in
-  // handleCwdChange relies on. Hydrate it from the session list so switching
-  // worktrees right after creating a session doesn't close the chat.
+  // server-computed projectKey. Hydrate it from the session list so the
+  // same-project check in handleSelectSession works right after creation.
   const hydrateSelectedSession = useCallback((sessionId: string) => {
     void fetch("/api/sessions", { cache: "no-store" })
       .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
@@ -682,24 +631,16 @@ export function AppShell() {
   const handleSessionCreated = useCallback((session: SessionInfo, sourceDraftKey: string) => {
     setRefreshKey((k) => k + 1);
     if (activeNewSessionDraftKeyRef.current !== sourceDraftKey) return;
-    invalidateWorkspaceRestore();
     activeNewSessionDraftKeyRef.current = null;
     setNewSessionCwd(null);
-    // A transient session has no projectKey/projectRoot, so the sidebar's
-    // project filter would drop it. Stamp it with the active project identity
-    // so it passes the filter and appears immediately.
-    const activeProjectKey = activeProjectKeyRef.current;
-    const enrichedSession = activeProjectKey
-      ? { ...session, projectKey: activeProjectKey, projectRoot: session.cwd }
-      : session;
-    setSelectedSession(enrichedSession);
+    setSelectedSession(session);
     hydrateSelectedSession(session.id);
     router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     // OMP writes the session file asynchronously; the first list refresh can
     // race the file landing on disk. Refresh once more shortly after so the
     // sidebar shows the new session without a manual refresh click.
     window.setTimeout(() => setRefreshKey((k) => k + 1), 2500);
-  }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
+  }, [router, hydrateSelectedSession]);
 
   const deliverSessionNotification = useCallback(({
     targetSession,
@@ -804,7 +745,6 @@ export function AppShell() {
   }, []);
 
   const handleSessionForked = useCallback((newSessionId: string) => {
-    invalidateWorkspaceRestore();
     activeNewSessionDraftKeyRef.current = null;
     setRefreshKey((k) => k + 1);
     setSessionKey((k) => k + 1);
@@ -816,14 +756,13 @@ export function AppShell() {
     }));
     hydrateSelectedSession(newSessionId);
     router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
-  }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
+  }, [router, hydrateSelectedSession]);
 
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
   }, []);
 
   const handleSessionDeleted = useCallback((sessionId: string) => {
-    invalidateWorkspaceRestore();
     setRefreshKey((k) => k + 1);
     if (selectedSession?.id === sessionId) {
       const cwd = selectedSession.cwd;
@@ -842,7 +781,7 @@ export function AppShell() {
       setActiveTopPanel(null);
       router.replace("/", { scroll: false });
     }
-  }, [invalidateWorkspaceRestore, selectedSession, router]);
+  }, [selectedSession, router]);
 
   const handleOpenFile = useCallback((
     filePath: string,
@@ -900,7 +839,7 @@ export function AppShell() {
   }, [selectedSession]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
-  const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
+  const effectiveNewSessionCwd = newSessionCwd;
   const newSessionDraftKey = selectedSession === null && effectiveNewSessionCwd
     ? `new:${newSessionDraftId}:${effectiveNewSessionCwd}`
     : null;
@@ -985,7 +924,6 @@ export function AppShell() {
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
-        onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
         explorerRefreshKey={explorerRefreshKey}
         onExplorerRefresh={handleExplorerRefresh}
@@ -1024,7 +962,7 @@ export function AppShell() {
           {
              label: translate("common.skills"),
             onClick: () => setSkillsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
+            disabled: !activeCwd,
             icon: (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -1036,7 +974,7 @@ export function AppShell() {
           {
              label: translate("common.plugins"),
             onClick: () => setPluginsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
+            disabled: !activeCwd,
             icon: (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 7V2" />
@@ -1093,12 +1031,12 @@ export function AppShell() {
               minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
               whiteSpace: "nowrap", overflow: "hidden",
               height: 32, padding: 0, background: "none", border: "none",
-              borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
+              borderRadius: 9, color: "var(--alias-label-secondary)", cursor: disabled ? "default" : "pointer",
               fontSize: 12, opacity: disabled ? 0.35 : 1,
               transition: "background 0.12s, color 0.12s",
             }}
-            onMouseEnter={(e) => { if (!disabled) { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; } }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}
+            onMouseEnter={(e) => { if (!disabled) { e.currentTarget.style.background = "var(--alias-interactive-bg-hover)"; e.currentTarget.style.color = "var(--alias-label-primary)"; } }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--alias-label-secondary)"; }}
           >
             {icon}
             {label}
@@ -1106,6 +1044,60 @@ export function AppShell() {
         ))}
       </div>
     </>
+  );
+
+  // 56px rail (collapsed sidebar): expand toggle with the dsh logo swap
+  // (brand mark at rest, panel icon on hover), a New Session shortcut, and a
+  // running-task dot.
+  const railCwd = activeCwd;
+  const handleRailNewSession = useCallback(() => {
+    if (!railCwd) return;
+    const tempId = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `rail-${Date.now().toString(36)}`;
+    handleNewSession(tempId, railCwd);
+  }, [railCwd, handleNewSession]);
+
+  const railContent = (
+    <div className="sidebar-rail-content rail-appear">
+      <button
+        type="button"
+        className="sidebar-rail-button sidebar-rail-toggle"
+        onClick={handleSidebarToggle}
+        title={translate("sidebar.show")}
+        aria-label={translate("sidebar.show")}
+      >
+        <span className="rail-mark" aria-hidden="true">O.</span>
+        <svg className="rail-panel-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className="sidebar-rail-button"
+        onClick={handleRailNewSession}
+        disabled={!railCwd}
+        title={translate("sidebar.new")}
+        aria-label={translate("sidebar.new")}
+        style={{ color: railCwd ? "var(--alias-label-primary)" : "var(--alias-label-caption)" }}
+      >
+        <svg width="18" height="18" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <line x1="6" y1="1" x2="6" y2="11" />
+          <line x1="1" y1="6" x2="11" y2="6" />
+        </svg>
+      </button>
+      <div style={{ flex: 1 }} />
+      {runningSessionIds.size > 0 && (
+        <span
+          className="sidebar-rail-button"
+          style={{ cursor: "default" }}
+          title={`${translate("sidebar.agentRunning")} (${runningSessionIds.size})`}
+          aria-label={`${translate("sidebar.agentRunning")} (${runningSessionIds.size})`}
+        >
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)" }} />
+        </span>
+      )}
+    </div>
   );
 
 
@@ -1223,11 +1215,12 @@ export function AppShell() {
       <div
         ref={sidebarResizer.panelRef}
         id="session-sidebar"
-        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}${sidebarResizer.isResizing ? " sidebar-resizing" : ""}`}
+        className={`sidebar-container${isMobile ? (sidebarOpen ? " sidebar-open" : " sidebar-closed") : " sidebar-open"}${!isMobile && railActive ? " sidebar-rail" : ""}${!isMobile && railPhase === "collapsing" ? " rail-collapsing" : ""}${!isMobile && railPhase === "expanding" ? " rail-expanding" : ""}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}${sidebarResizer.isResizing ? " sidebar-resizing" : ""}`}
         style={{
-          "--sidebar-width": `${sidebarResizer.width}px`,
-          background: "var(--bg-panel)",
-          borderRight: "1px solid var(--border-subtle)",
+          "--sidebar-width": `${!isMobile && railCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarResizer.width}px`,
+          "--sidebar-freeze-width": `${sidebarResizer.width}px`,
+          background: "var(--specific-sidebar-fill)",
+          borderRight: "0.5px solid var(--alias-border-l3)",
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
@@ -1236,9 +1229,9 @@ export function AppShell() {
           zIndex: 200,
         } as React.CSSProperties}
       >
-        {sidebarContent}
+        {!isMobile && railActive ? railContent : sidebarContent}
       </div>
-      {sidebarOpen && (
+      {sidebarOpen && (!isMobile ? !railCollapsed : true) && (
         <div
           {...sidebarResizer.separatorProps}
           aria-controls="session-sidebar"
@@ -1253,7 +1246,7 @@ export function AppShell() {
         {/* Top bar */}
         <div ref={topBarRef} style={{ flexShrink: 0, background: "var(--bg-panel)" }}>
           <TopBar
-            sidebarOpen={sidebarOpen}
+            sidebarOpen={isMobile ? sidebarOpen : !railCollapsed}
             handleSidebarToggle={handleSidebarToggle}
             preference={preference}
             toggleTheme={toggleTheme}
@@ -1553,6 +1546,7 @@ export function AppShell() {
               sessionRunning={Boolean(selectedSession && runningSessionIds.has(selectedSession.id))}
               newSessionCwd={effectiveNewSessionCwd}
               newSessionDraftKey={newSessionDraftKey}
+              onChangeNewSessionCwd={setNewSessionCwd}
               onAgentEnd={handleAgentEnd}
               onAttentionNeeded={handleAttentionNeeded}
               onSessionCreated={handleSessionCreated}

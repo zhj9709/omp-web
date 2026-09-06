@@ -1,0 +1,541 @@
+/* dsh-style sidebar geometry. Colors come from the alias token layer in
+ * app/sidebar-theme.css; light/dark switches there. */
+
+.root {
+  --sidebar-inline-padding: 12px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  padding: 6px var(--sidebar-inline-padding);
+  box-sizing: border-box;
+  color: var(--alias-label-primary);
+  font-size: 14px;
+  min-width: 0;
+}
+
+/* Logo row: 60px, brand left, actions right */
+.logoRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+  flex-shrink: 0;
+  padding: 8px 0 8px 4px;
+  margin-bottom: 8px;
+}
+
+/* 28×28 round icon button (refresh etc.) */
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--alias-label-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--ds-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.iconButton:hover:not(:disabled) {
+  background: var(--alias-interactive-bg-hover);
+  color: var(--alias-label-primary);
+}
+.iconButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.iconButtonSuccess {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.iconButtonSuccess:hover:not(:disabled) {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+/* New Session button */
+.newSession {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  padding: 8px 16px;
+  margin: 0 2px 8px;
+  flexShrink: 0;
+  background: var(--alias-button-elevated-fill);
+  border: 0.5px solid var(--alias-border-l3);
+  border-radius: 12px;
+  color: var(--alias-label-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.newSession:hover:not(:disabled) {
+  background: var(--alias-button-floating-hover);
+}
+.newSession:disabled {
+  cursor: not-allowed;
+  color: var(--alias-label-caption);
+  opacity: 0.7;
+}
+
+/* Toolbar row under the New button: title search + view options + open project */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 0 2px 6px;
+  flex-shrink: 0;
+}
+.toolbarLabel {
+  flex: 1;
+  min-width: 0;
+  padding-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--alias-label-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+.toolbar .iconButton {
+  width: 24px;
+  height: 24px;
+}
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--bg-panel);
+  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+}
+.searchBox:focus-within {
+  border-color: var(--accent);
+}
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+}
+.searchInput::placeholder {
+  color: var(--text-dim);
+}
+.searchClear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.searchClear:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* Empty state (no projects yet) */
+.emptyState {
+  padding: 24px 14px;
+  text-align: center;
+}
+
+/* Project group */
+.projectGroup {
+  margin-bottom: 2px;
+}
+
+/* Project header row — click to collapse/expand */
+.projectHeader {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 2px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--alias-label-secondary);
+}
+/* Hover: no background fill — only the chevron/text color darkens slightly. */
+.projectHeader:hover .projectHeaderChevron,
+.projectHeader:hover .projectName {
+  color: var(--alias-label-primary);
+}
+.projectHeader:hover .projectCount {
+  color: var(--alias-label-secondary);
+}
+/* Hover swap (dsh time→ellipsis pattern): the count keeps its layout slot but
+   gives way to the absolutely positioned row actions — nothing shifts. */
+.projectHeader:hover .projectCount,
+.projectHeaderMenuOpen .projectCount {
+  visibility: hidden;
+}
+/* Child elements pass clicks through to the header (which carries onClick),
+   so the entire row — including empty space after the text — is clickable. */
+.projectHeaderChevron,
+.projectName,
+.projectCount {
+  pointer-events: none;
+}
+.projectHeaderChevron {
+  flex-shrink: 0;
+}
+.projectName {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projectCount {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--alias-label-caption);
+  background: var(--alias-interactive-bg-hover);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+/* Project row actions (new session +, workspace "..." menu) — hover only,
+   same swap pattern as the session row's time→ellipsis. Absolutely positioned
+   so appearing on hover never shifts the title/count (no jitter). */
+.projectRowActions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+.projectHeader:hover .projectRowActions,
+.projectHeaderMenuOpen .projectRowActions {
+  display: inline-flex;
+}
+.projectHeaderMenuOpen .projectName,
+.projectHeaderMenuOpen .projectHeaderChevron {
+  color: var(--alias-label-primary);
+}
+.projectHeaderDragging {
+  opacity: 0.45;
+}
+
+/* Project drag insert marker (dsh): a leading chevron and 2px rule between
+   rows, absolutely positioned so it neither resembles a row border nor
+   changes layout. */
+.projectHeaderDropBefore,
+.projectHeaderDropAfter {
+  position: relative;
+}
+.projectHeaderDropBefore::before,
+.projectHeaderDropAfter::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 4px;
+  height: 12px;
+  background:
+    linear-gradient(
+      55deg,
+      transparent calc(50% - 1px),
+      var(--accent) calc(50% - 1px) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    ) 0 0 / 5px 7px no-repeat,
+    linear-gradient(
+      125deg,
+      transparent calc(50% - 1px),
+      var(--accent) calc(50% - 1px) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    ) 0 5px / 5px 7px no-repeat,
+    linear-gradient(var(--accent) 0 0) 4px 5px / calc(100% - 4px) 2px no-repeat;
+  pointer-events: none;
+}
+.projectHeaderDropBefore::before {
+  top: -7px;
+}
+.projectHeaderDropAfter::after {
+  bottom: -7px;
+}
+
+/* "Expand N more" / "Collapse" button for groups with many sessions */
+.expandMore {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 5px 8px 5px 28px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  color: var(--alias-label-caption);
+  transition: background var(--ds-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.expandMore:hover {
+  background: var(--alias-interactive-bg-hover);
+  color: var(--alias-label-secondary);
+}
+
+/* Session list — bleeds to the sidebar's right edge so the scrollbar hugs it */
+.sessionArea {
+  flex: 1 1 auto;
+  min-height: 80px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Extend to the root's right padding edge; the stable scrollbar gutter is
+     the only right inset, so rows don't carry a doubled right whitespace. */
+  margin-right: calc(-1 * var(--sidebar-inline-padding));
+  scrollbar-gutter: stable;
+  scrollbar-color: transparent transparent;
+}
+.sessionArea[data-scrollbar-shown="true"] {
+  scrollbar-color: var(--alias-scrollbar-thumb) transparent;
+}
+
+/* Session row (dsh cell: fixed 32px single line) */
+.sessionRow {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding-right: 8px;
+  cursor: pointer;
+  overflow: visible;
+  border-radius: 6px;
+}
+.sessionRow:hover {
+  background: var(--alias-interactive-bg-hover);
+}
+.sessionRowSelected {
+  background: var(--alias-interactive-bg-hover-accent);
+}
+.sessionRowSelected:hover {
+  background: var(--alias-interactive-bg-hover-accent);
+}
+.sessionRowConfirm {
+  background: var(--error-bg) !important;
+  cursor: default;
+}
+.sessionRowConfirm:hover {
+  background: var(--error-bg) !important;
+}
+/* An open row menu pins the row's hover fill (dsh .menuOpen pattern). */
+.sessionRowMenuOpen {
+  background: var(--alias-interactive-bg-hover);
+}
+/* Leading 16px status slot (running / unread markers) */
+.sessionSlot {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sessionTitle {
+  flex: 1;
+  min-width: 0;
+  margin: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+  color: var(--alias-label-primary);
+}
+.sessionTitleSelected {
+  font-weight: 500;
+}
+.sessionTime {
+  flex: none;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--alias-label-tertiary);
+}
+/* Trailing "..." swaps in for the time on hover (dsh time→ellipsis swap) */
+.rowMenu {
+  flex: none;
+  display: none;
+  align-items: center;
+}
+.sessionRow:hover .rowMenu,
+.sessionRowMenuOpen .rowMenu {
+  display: inline-flex;
+}
+.sessionRow:hover .sessionTime,
+.sessionRowMenuOpen .sessionTime {
+  display: none;
+}
+.rowMenuButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--alias-label-tertiary);
+  cursor: pointer;
+}
+.rowMenuButton:hover {
+  color: var(--alias-label-primary);
+}
+/* Row secondary menu (portalled, fixed-positioned under the "..." button).
+   Width fits its content (max-content), and the column flex + stretch makes
+   every item's hover fill span the full menu width — as wide as the longest
+   item — instead of shrink-wrapping each label. */
+.sessionMenu {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: max-content;
+  max-width: 220px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-menu);
+}
+.sessionMenuItemLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Scroll region for the item list — pinned actions (e.g. "add project") live
+   outside this so they stay visible without scrolling. */
+.sessionMenuScroller {
+  max-height: 280px;
+  overflow-y: auto;
+}
+.sessionMenuDivider {
+  flex: none;
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+.sessionMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--alias-label-primary);
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sessionMenuItem:hover {
+  background: var(--alias-interactive-bg-hover);
+}
+.sessionMenuItemDanger {
+  color: var(--error);
+}
+.sessionMenuItemDanger:hover {
+  background: var(--error-bg);
+}
+.chevronButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--alias-label-caption);
+  cursor: pointer;
+}
+
+/* File explorer section */
+.explorerSection {
+  border-top: 0.5px solid var(--alias-border-l3);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.explorerSectionOpen {
+  flex: 1 1 0;
+}
+.explorerHeaderButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  color: var(--alias-label-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: left;
+  transition: color var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.explorerHeaderButton:hover {
+  color: var(--alias-label-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iconButton,
+  .newSession,
+  .expandMore,
+  .rowAction,
+  .explorerHeaderButton {
+    transition: none;
+  }
+}
