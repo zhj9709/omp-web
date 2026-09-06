@@ -3,11 +3,8 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useReducer } from "react";
 import type {
   AgentMessage,
-  ExtensionStatusItem,
   ExtensionUiRequest,
-  ExtensionWidgetItem,
 } from "@/lib/types";
-import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { projectIdentityKey } from "@/lib/project-identity";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { AgentCommandError, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
@@ -23,14 +20,7 @@ import {
 import { getToolNamesForPreset, isRestrictiveToolRequest, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { normalizeTodoPhases, type TodoPhase } from "@/lib/todos";
-import {
-  mergeSubagentSnapshot,
-  normalizeSubagentEvent,
-  upsertSubagent,
-  SUBAGENT_TERMINAL_STATUSES,
-  type SubagentInfo,
-  type SubagentTranscript,
-} from "@/lib/subagents";
+import { normalizeSubagentEvent } from "@/lib/subagents";
 import { normalizeGoalEvent, type GoalModeInfo } from "@/lib/goal";
 import {
   OMP_EXECUTABLE_SLASH_COMMANDS,
@@ -42,30 +32,19 @@ import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { extractToolCommand, getToolExecutionProgress, toolArgsDigest } from "@/lib/tool-execution-progress";
 import { readCompactResult, type CompactCommandResult, type CompactResultInfo } from "@/lib/compaction-summary";
 import {
-  CHAT_SCROLL_REATTACH_TOLERANCE,
-  CHAT_SCROLL_TAIL_TOLERANCE,
-  getLiveFollowAttached,
-} from "@/lib/chat-lazy-load";
-import {
   INITIAL_STREAMING_STATE,
   streamReducer,
   type ClientAssistantMessageEvent,
 } from "@/lib/streaming-message";
-import {
-  createNoticeId,
-  NOTICE_EXIT_ANIMATION_MS,
-  NOTICE_VISIBLE_MS,
-  noticeReducer,
-  type NoticeType,
-} from "./agent-session/notices";
+import { useNotices } from "./agent-session/notices";
+import { useAgentPhase, useDeltaCoalescer, useSubagents } from "./agent-session/coalescers";
+import { useExtensionUi } from "./agent-session/extension-ui";
+import { useChatScroll } from "./agent-session/scroll";
 import type {
   AgentEvent,
-  AgentPhase,
   AgentStateResponse,
   AttachedImage,
   BuiltinSlashCommandResult,
-  ExtensionUiCustomRequest,
-  ExtensionUiDialogRequest,
   LastAssistantTextResponse,
   ModelEntry,
   ModelRoleEntry,
@@ -151,7 +130,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [streamState, dispatch] = useReducer(streamReducer, INITIAL_STREAMING_STATE);
-  const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
   const [pendingBash, setPendingBash] = useState<{ command: string; excludeFromContext: boolean } | null>(null);
@@ -181,19 +159,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [isHandingOff, setIsHandingOff] = useState(false);
   const [handoffError, setHandoffError] = useState<string | null>(null);
   const [compactResult, setCompactResult] = useState<CompactResultInfo | null>(null);
-  const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
-  const [promptAnchorActive, setPromptAnchorActive] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [todoPhases, setTodoPhases] = useState<TodoPhase[]>([]);
-  const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
-  const [subagentsUnavailable, setSubagentsUnavailable] = useState(false);
   const [goal, setGoal] = useState<GoalModeInfo | null>(null);
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
-  const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
-  const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
-  const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
-  const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
 
 
@@ -216,20 +186,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // full session reload (which re-renders every message and reads as a flash).
   const messagesTailCompleteRef = useRef(false);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
-  const initialScrollDoneRef = useRef(false);
-  const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
-  const pendingScrollToUserRef = useRef(false);
-  const isNearBottomRef = useRef(true);
-  const previousScrollTopRef = useRef(0);
-  const liveFollowFrameRef = useRef<number | null>(null);
-  // Live pin target during the prompt-anchor phase, written by ChatWindow's
-  // spacer measurement: the scrollTop that keeps the just-sent user message
-  // at the top of the viewport, or null once the streaming content outgrows
-  // the viewport (spacer drained) and bottom-following should resume.
-  const promptAnchorPinTopRef = useRef<number | null>(null);
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const newSessionModelOverrideRef = useRef<SelectedModel | null>(null);
@@ -240,126 +197,36 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const modelSwitchPendingRef = useRef(false);
   const draftKeyAliasesRef = useRef(new Map<string, string>());
   const sessionHookMountedRef = useRef(true);
-  const pendingDeltasRef = useRef<ClientAssistantMessageEvent[]>([]);
-  const deltaFrameRef = useRef<number | null>(null);
   // Mirror of expandCompaction so loadSession / loadContext (which are wrapped
   // in stable useCallbacks with many callers) always read the latest value
   // without forcing a full deps rewrite.
   const expandCompactionRef = useRef(expandCompaction);
   expandCompactionRef.current = expandCompaction;
-  // tool_execution_* events can arrive at high frequency (bash partial output
-  // streams one progress event per chunk), and subagent_progress fires per
-  // progress tick. Coalesce those updates into a single setState per animation
-  // frame so a busy tool doesn't re-render the whole shell on every event.
-  const agentPhaseRef = useRef<AgentPhase>(null);
-  const pendingPhaseRef = useRef<{ value: AgentPhase } | null>(null);
-  const phaseFrameRef = useRef<number | null>(null);
-  const pendingSubagentEventsRef = useRef<SubagentInfo[]>([]);
-  const subagentFrameRef = useRef<number | null>(null);
   // toolCallId → concrete command text, populated from streamed toolcall_end
   // arguments so the activity bar can show the real command while it runs.
   const toolCommandByIdRef = useRef(new Map<string, string>());
   // Monotonic request id for branch/leaf context loads: rapid navigations
   // must never let an older response overwrite the newer one.
   const loadContextRequestIdRef = useRef(0);
-  // Original document.title captured before an extension setTitle override, so
-  // unmount can restore it instead of leaving the tab title stale.
-  const documentTitleRef = useRef<string | null>(null);
 
-  // message_update deltas are rAF-coalesced into a single dispatch per frame to
-  // avoid a React render per token. Flush synchronously before any non-delta
-  // stream-state mutation so stale deltas can't resurrect a finished bubble.
-  const flushPendingDeltas = useCallback(() => {
-    if (deltaFrameRef.current !== null) {
-      cancelAnimationFrame(deltaFrameRef.current);
-      deltaFrameRef.current = null;
-    }
-    const deltas = pendingDeltasRef.current;
-    if (deltas.length > 0) {
-      pendingDeltasRef.current = [];
-      dispatch({ type: "deltaBatch", events: deltas });
-    }
-  }, []);
-
-  // --- rAF-coalesced agent phase updates -------------------------------------
-  // High-frequency phase events (tool_execution_update progress ticks) funnel
-  // through queuePhaseUpdate and settle in one setState per frame. Low-frequency
-  // state transitions use commitAgentPhase (immediate) after flushPendingPhase
-  // where ordering matters (terminal states).
-  const schedulePhaseFlush = useCallback(() => {
-    if (phaseFrameRef.current !== null) return;
-    phaseFrameRef.current = requestAnimationFrame(() => {
-      phaseFrameRef.current = null;
-      const pending = pendingPhaseRef.current;
-      pendingPhaseRef.current = null;
-      if (pending) {
-        agentPhaseRef.current = pending.value;
-        setAgentPhase(pending.value);
-      }
-    });
-  }, []);
-
-  const queuePhaseUpdate = useCallback((updater: (prev: AgentPhase) => AgentPhase) => {
-    const prev = pendingPhaseRef.current?.value ?? agentPhaseRef.current ?? null;
-    pendingPhaseRef.current = { value: updater(prev) };
-    schedulePhaseFlush();
-  }, [schedulePhaseFlush]);
-
-  const flushPendingPhase = useCallback(() => {
-    if (phaseFrameRef.current !== null) {
-      cancelAnimationFrame(phaseFrameRef.current);
-      phaseFrameRef.current = null;
-    }
-    const pending = pendingPhaseRef.current;
-    pendingPhaseRef.current = null;
-    if (pending) {
-      agentPhaseRef.current = pending.value;
-      setAgentPhase(pending.value);
-    }
-  }, []);
-
-  const commitAgentPhase = useCallback((next: AgentPhase) => {
-    agentPhaseRef.current = next;
-    setAgentPhase(next);
-  }, []);
-
-  // --- rAF-coalesced subagent roster updates --------------------------------
-  // OMP snapshots carry only `lastUpdate`; track the first observed running
-  // time and the terminal time here so the roster can show real elapsed
-  // durations (mirroring the DSH subagent monitor).
-  const subagentStartedAtRef = useRef<Map<string, number>>(new Map());
-  const subagentEndedAtRef = useRef<Map<string, number>>(new Map());
-  // OMP lifecycle frames use "started" for a running subagent; completed/
-  // failed/aborted are terminal. Anything else (running/working/in_progress/
-  // active) is also live.
-  const trackSubagentTimings = useCallback((roster: SubagentInfo[]): SubagentInfo[] => {
-    const started = subagentStartedAtRef.current;
-    const ended = subagentEndedAtRef.current;
-    return roster.map((info) => {
-      if (!SUBAGENT_TERMINAL_STATUSES[info.status]) {
-        if (!started.has(info.id)) started.set(info.id, Date.now());
-        return { ...info, startedAt: started.get(info.id) };
-      }
-      if (!ended.has(info.id)) ended.set(info.id, Date.now());
-      return { ...info, startedAt: started.get(info.id), endedAt: ended.get(info.id) };
-    });
-  }, []);
-
-  const queueSubagentEvent = useCallback((info: SubagentInfo) => {
-    pendingSubagentEventsRef.current.push(info);
-    if (subagentFrameRef.current !== null) return;
-    subagentFrameRef.current = requestAnimationFrame(() => {
-      subagentFrameRef.current = null;
-      const events = pendingSubagentEventsRef.current;
-      pendingSubagentEventsRef.current = [];
-      if (events.length === 0) return;
-      setSubagents((prev) => {
-        let next = prev;
-        for (const ev of events) next = upsertSubagent(next, ev);
-        return trackSubagentTimings(next);
-      });
-    });
-  }, [trackSubagentTimings]);
+  // --- composed self-contained state hooks -----------------------------------
+  const { notices, addNotice } = useNotices();
+  const { agentPhase, queuePhaseUpdate, flushPendingPhase, commitAgentPhase } = useAgentPhase();
+  const { flushPendingDeltas, pushDelta } = useDeltaCoalescer(dispatch);
+  const {
+    subagents, subagentsUnavailable, setSubagentsUnavailable, queueSubagentEvent, refreshSubagents, loadSubagentTranscript,
+  } = useSubagents(sessionIdRef);
+  const {
+    extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets,
+    respondToExtensionUi, sendExtensionCustomInput, handleExtensionUiRequest,
+  } = useExtensionUi({ sessionIdRef, chatInputRef: opts.chatInputRef, onAttentionNeeded, addNotice });
+  const {
+    promptAnchorActive, setPromptAnchorActive,
+    initialScrollDoneRef, lastUserMsgRef, pendingScrollToUserRef, isNearBottomRef,
+    liveFollowFrameRef, promptAnchorPinTopRef,
+    messagesEndRef, scrollContainerRef,
+    scrollToBottom, scrollUserMsgToTop,
+  } = useChatScroll({ agentRunningRef, messages, loading, agentRunning });
 
 
   sessionPropIdRef.current = session?.id ?? null;
@@ -417,26 +284,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!isNew || sessionIdRef.current) return;
     setQueueModes(getPreferredQueueModes());
   }, [isNew]);
-
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    const container = scrollContainerRef.current;
-    const pinTop = promptAnchorPinTopRef.current;
-    if (pinTop !== null && container) {
-      // Prompt-anchor phase: hold the just-sent user message at the top of
-      // the viewport instead of chasing the scroll bottom. The bottom moves
-      // with every streamed token (the anchor spacer shrinks as the response
-      // grows), so chasing it makes the spacer update and the follow scroll
-      // land in different frames — the visible ±30px oscillation. The pin
-      // target is fixed for the whole phase, so both writers converge on it.
-      container.scrollTo({
-        top: Math.min(pinTop, Math.max(0, container.scrollHeight - container.clientHeight)),
-        behavior: "auto",
-      });
-    } else {
-      messagesEndRef.current?.scrollIntoView({ behavior });
-    }
-    if (container) previousScrollTopRef.current = container.scrollTop;
-  }, []);
 
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
@@ -603,7 +450,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (showLoading && !messagesLoaded) setLoading(false);
     }
-  }, []);
+  }, [setSubagentsUnavailable]);
 
   // Full-session reloads re-render every message (defer-thinking variants,
   // full Markdown), which reads as a flash when the finished message is
@@ -820,109 +667,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
   }, [maintainEventsConnected, session?.id, sessionRunning]);
 
-  const respondToExtensionUi = useCallback(async (
-    request: ExtensionUiDialogRequest,
-    response: { value: string } | { confirmed: boolean } | { cancelled: true },
-  ) => {
-    const sid = sessionIdRef.current;
-    setExtensionDialog((current) => current?.id === request.id ? null : current);
-    if (!sid) return;
-    try {
-      await sendAgentCommand(sid, {
-        type: "extension_ui_response",
-        id: request.id,
-        ...response,
-      });
-    } catch (e) {
-      console.error("Failed to send extension UI response:", e);
-    }
-  }, []);
-
-  const sendExtensionCustomInput = useCallback(async (request: ExtensionUiCustomRequest, data: string) => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    try {
-      await sendAgentCommand(sid, {
-        type: "extension_ui_input",
-        id: request.id,
-        data,
-      });
-    } catch (e) {
-      console.error("Failed to send extension custom UI input:", e);
-    }
-  }, []);
-
-  const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
-    const message = notice.message.trim();
-    if (!message) return;
-    dispatchNotice({
-      type: "add",
-      notice: {
-        id: notice.id ?? createNoticeId(),
-        message,
-        type: notice.type ?? "info",
-      },
-    });
-  }, []);
-
-  const handleExtensionUiRequest = useCallback((request: ExtensionUiRequest) => {
-    if (isBlockingExtensionUiRequest(request)) onAttentionNeeded?.(request);
-
-    switch (request.method) {
-      case "select":
-      case "confirm":
-      case "input":
-      case "editor":
-        setExtensionDialog(request);
-        break;
-      case "notify": {
-        addNotice({
-          id: request.id,
-          message: request.message,
-          type: request.notifyType ?? "info",
-        });
-        break;
-      }
-      case "setStatus":
-        setExtensionStatuses((prev) => {
-          const rest = prev.filter((item) => item.key !== request.statusKey);
-          return request.statusText !== undefined
-            ? [...rest, { key: request.statusKey, text: request.statusText }]
-            : rest;
-        });
-        break;
-      case "setWidget":
-        setExtensionWidgets((prev) => {
-          const rest = prev.filter((item) => item.key !== request.widgetKey);
-          return request.widgetLines
-            ? [...rest, {
-                key: request.widgetKey,
-                lines: request.widgetLines,
-                placement: request.widgetPlacement ?? "aboveEditor",
-              }]
-            : rest;
-        });
-        break;
-      case "setTitle":
-        if (request.title) {
-          if (documentTitleRef.current === null) {
-            documentTitleRef.current = document.title;
-          }
-          document.title = request.title;
-        }
-        break;
-      case "set_editor_text":
-        opts.chatInputRef?.current?.insertText(request.text);
-        break;
-      case "custom":
-        setExtensionCustomUi((current) => {
-          if (request.closed) return current?.id === request.id ? null : current;
-          return request;
-        });
-        break;
-    }
-  }, [addNotice, onAttentionNeeded, opts.chatInputRef]);
-
   const settleUiStage = useCallback(() => {
     const wasRunning = agentRunningRef.current;
     agentRunningRef.current = false;
@@ -933,7 +677,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     flushPendingDeltas();
     dispatch({ type: "end" });
     return wasRunning;
-  }, [flushPendingDeltas]);
+  }, [commitAgentPhase, flushPendingDeltas, flushPendingPhase]);
 
   const notifyPromptStage = useCallback((runId: number) => {
     if (notifiedPromptRunIdRef.current === runId) return false;
@@ -998,7 +742,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
 
     eventStreamGraceTimerRef.current = setTimeout(() => void checkServerIdle(), EVENT_STREAM_IDLE_GRACE_MS);
-  }, [cancelEventStreamGrace, closeEvents]);
+  }, [cancelEventStreamGrace, closeEvents, commitAgentPhase]);
 
   const finishPromptWithoutStream = useCallback(async (sid: string | null = sessionIdRef.current, runId = promptRunIdRef.current) => {
     // Bail out before loadSession too: a stale finish for a previous run
@@ -1117,7 +861,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch {
       // Network still down — the next poll / visibility / online tick retries.
     }
-  }, [finishPromptWithoutStream]);
+  }, [finishPromptWithoutStream, setSubagentsUnavailable]);
 
   // Recovery net for missed SSE events: while the agent is running, verify
   // against the server periodically and whenever the tab returns to the
@@ -1171,34 +915,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     });
     setTodoPhases(normalizeTodoPhases(result?.todoPhases ?? phases));
   }, []);
-
-  const refreshSubagents = useCallback(async (sid: string) => {
-    try {
-      const snapshot = await sendAgentCommand<{ subagents?: unknown }>(sid, {
-        type: "get_subagents",
-      });
-      if (sessionIdRef.current !== sid) return;
-      setSubagents((prev) => trackSubagentTimings(mergeSubagentSnapshot(prev, snapshot)));
-    } catch {
-      // Best-effort refresh; lifecycle events keep the roster current anyway.
-    }
-  }, [trackSubagentTimings]);
-
-  const loadSubagentTranscript = useCallback(
-    async (subagentId: string): Promise<SubagentTranscript | null> => {
-      const sid = sessionIdRef.current;
-      if (!sid) return null;
-      try {
-        return await sendAgentCommand<SubagentTranscript>(sid, {
-          type: "get_subagent_messages",
-          subagentId,
-        });
-      } catch {
-        return null;
-      }
-    },
-    [],
-  );
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     // Flush any rAF-coalesced deltas before a non-delta event mutates streaming
@@ -1353,7 +1069,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         } else {
           const delta = event.assistantMessageEvent as ClientAssistantMessageEvent | undefined;
           if (delta) {
-            pendingDeltasRef.current.push(delta);
+            pushDelta(delta);
             // Coalesce phase changes per frame: text/tool deltas arrive at
             // token rate, and thinking deltas mark the model's reasoning stage.
             if (delta.type === "thinking_start" || delta.type === "thinking_delta") {
@@ -1364,16 +1080,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             if (delta.type === "toolcall_end" && delta.toolCall) {
               const command = extractToolCommand(delta.toolCall.arguments);
               if (command) toolCommandByIdRef.current.set(delta.toolCall.id, command);
-            }
-            if (deltaFrameRef.current === null) {
-              deltaFrameRef.current = requestAnimationFrame(() => {
-                deltaFrameRef.current = null;
-                const deltas = pendingDeltasRef.current;
-                pendingDeltasRef.current = [];
-                if (deltas.length > 0) {
-                  dispatch({ type: "deltaBatch", events: deltas });
-                }
-              });
             }
           }
         }
@@ -1569,7 +1275,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
 
     }
-  }, [addNotice, cancelEventStreamGrace, flushPendingDeltas, handleExtensionUiRequest, notifyPromptStage, onAgentEnd, refreshSubagents, refreshTodos, reloadSessionPreservingTail, scheduleEventStreamClose, scrollToBottom, settleUiStage]);
+  }, [addNotice, cancelEventStreamGrace, commitAgentPhase, flushPendingDeltas, flushPendingPhase, handleExtensionUiRequest, isNearBottomRef, liveFollowFrameRef, loadSession, notifyPromptStage, onAgentEnd, pendingScrollToUserRef, pushDelta, queuePhaseUpdate, queueSubagentEvent, refreshSubagents, refreshTodos, reloadSessionPreservingTail, scheduleEventStreamClose, scrollToBottom, settleUiStage, setSubagentsUnavailable]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
@@ -1692,7 +1398,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       flushPendingDeltas();
       dispatch({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission, flushPendingDeltas]);
+  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, commitAgentPhase, composerDraftKey, flushPendingDeltas, flushPendingPhase, pendingScrollToUserRef, reconcileAgentState, restoreSubmission, setPromptAnchorActive]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     if (agentRunningRef.current || bashRunningRef.current) return;
@@ -2247,50 +1953,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Failed to set queue mode:", e);
     }
   }, [queueModes, addNotice]);
-  const scrollUserMsgToTop = useCallback(() => {
-    const container = scrollContainerRef.current;
-    const el = lastUserMsgRef.current;
-    if (!container || !el) return;
-    const elAbsTop = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
-    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
-    const targetTop = Math.min(Math.max(0, elAbsTop - 16), maxScrollTop);
-
-    if (liveFollowFrameRef.current !== null) {
-      cancelAnimationFrame(liveFollowFrameRef.current);
-      liveFollowFrameRef.current = null;
-    }
-    isNearBottomRef.current = true;
-    previousScrollTopRef.current = targetTop;
-    container.scrollTo({ top: targetTop, behavior: "auto" });
-  }, []);
-
-  const handleScrollPositionChange = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (container) {
-      const { scrollTop, clientHeight, scrollHeight } = container;
-      const isAgentRunning = agentRunningRef.current;
-      const wasAttached = isNearBottomRef.current;
-      const isAttached = getLiveFollowAttached(
-        wasAttached,
-        previousScrollTopRef.current,
-        scrollTop,
-        clientHeight,
-        scrollHeight,
-        isAgentRunning
-          ? CHAT_SCROLL_REATTACH_TOLERANCE
-          : CHAT_SCROLL_TAIL_TOLERANCE,
-      );
-      isNearBottomRef.current = isAttached;
-      previousScrollTopRef.current = scrollTop;
-      if (!wasAttached && isAttached && isAgentRunning) {
-        scrollToBottom("auto");
-      } else if (!isAttached && liveFollowFrameRef.current !== null) {
-        cancelAnimationFrame(liveFollowFrameRef.current);
-        liveFollowFrameRef.current = null;
-      }
-    }
-  }, [scrollToBottom]);
-
   // Load session on mount
   useEffect(() => {
     sessionHookMountedRef.current = true;
@@ -2347,30 +2009,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           }
         });
       }
-      if (liveFollowFrameRef.current !== null) {
-        cancelAnimationFrame(liveFollowFrameRef.current);
-        liveFollowFrameRef.current = null;
-      }
-      // Cancel the coalescing frames too: a frame scheduled after unmount
-      // would dispatch into a dead component tree.
-      if (deltaFrameRef.current !== null) {
-        cancelAnimationFrame(deltaFrameRef.current);
-        deltaFrameRef.current = null;
-      }
-      if (phaseFrameRef.current !== null) {
-        cancelAnimationFrame(phaseFrameRef.current);
-        phaseFrameRef.current = null;
-      }
-      if (subagentFrameRef.current !== null) {
-        cancelAnimationFrame(subagentFrameRef.current);
-        subagentFrameRef.current = null;
-      }
-      pendingDeltasRef.current = [];
-      pendingSubagentEventsRef.current = [];
-      if (documentTitleRef.current !== null) {
-        document.title = documentTitleRef.current;
-        documentTitleRef.current = null;
-      }
       bashRecoveryIdRef.current += 1;
       cancelEventStreamGrace();
       closeEvents();
@@ -2392,39 +2030,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onBranchDataChange(data?.tree ?? [], activeLeafId, handleLeafChange);
   }, [data?.tree, activeLeafId, handleLeafChange, onBranchDataChange]);
 
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    previousScrollTopRef.current = container.scrollTop;
-    container.addEventListener("scroll", handleScrollPositionChange, { passive: true });
-    return () => {
-      container.removeEventListener("scroll", handleScrollPositionChange);
-    };
-  }, [messages.length, loading, handleScrollPositionChange]);
-
-  useEffect(() => {
-    if (!agentRunning) setPromptAnchorActive(false);
-  }, [agentRunning]);
-
-  useLayoutEffect(() => {
-    if (messages.length > 0) {
-      if (pendingScrollToUserRef.current) {
-        pendingScrollToUserRef.current = false;
-        initialScrollDoneRef.current = true;
-        scrollUserMsgToTop();
-      } else if (!initialScrollDoneRef.current) {
-        initialScrollDoneRef.current = true;
-        scrollToBottom("auto");
-      } else if (isNearBottomRef.current) {
-        // Follow new messages while the agent is running too: the tail-tracking
-        // ref already encodes "user is at the bottom", so appends (queue
-        // deliveries, message_end, reloads) keep the viewport pinned to the
-        // latest message instead of stranding it mid-conversation.
-        scrollToBottom("auto");
-      }
-    }
-  }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
-
   // Load model list
   useEffect(() => {
     const controller = new AbortController();
@@ -2439,23 +2044,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const t = setTimeout(() => setCompactResult(null), 6000);
     return () => clearTimeout(t);
   }, [compactResult]);
-
-  useEffect(() => {
-    if (noticeState.visible.length === 0) return;
-    const exiting = noticeState.visible.find((notice) => notice.exiting);
-    if (exiting) {
-      const t = setTimeout(() => {
-        dispatchNotice({ type: "remove", id: exiting.id });
-      }, NOTICE_EXIT_ANIMATION_MS);
-      return () => clearTimeout(t);
-    }
-    const oldest = noticeState.visible[0];
-    if (!oldest) return;
-    const t = setTimeout(() => {
-      dispatchNotice({ type: "mark_oldest_exiting" });
-    }, NOTICE_VISIBLE_MS);
-    return () => clearTimeout(t);
-  }, [noticeState.visible]);
 
   useEffect(() => {
     setSessionStatsOverride(null);
@@ -2485,7 +2073,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     slashCommands, slashCommandsLoading, queuedMessages, todoPhases, setTodos,
     subagents, subagentsUnavailable, refreshSubagents, loadSubagentTranscript,
     goal,
-    notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,

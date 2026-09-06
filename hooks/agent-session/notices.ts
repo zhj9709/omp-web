@@ -1,3 +1,7 @@
+"use client";
+
+import { useCallback, useEffect, useReducer } from "react";
+
 export type NoticeType = "info" | "success" | "warning" | "error";
 
 export type NoticeItem = {
@@ -72,4 +76,40 @@ export function noticeReducer(state: NoticeState, action: NoticeAction): NoticeS
     default:
       return state;
   }
+}
+
+export function useNotices() {
+  const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
+
+  const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
+    const message = notice.message.trim();
+    if (!message) return;
+    dispatchNotice({
+      type: "add",
+      notice: {
+        id: notice.id ?? createNoticeId(),
+        message,
+        type: notice.type ?? "info",
+      },
+    });
+  }, []);
+
+  useEffect(() => {
+    if (noticeState.visible.length === 0) return;
+    const exiting = noticeState.visible.find((notice) => notice.exiting);
+    if (exiting) {
+      const t = setTimeout(() => {
+        dispatchNotice({ type: "remove", id: exiting.id });
+      }, NOTICE_EXIT_ANIMATION_MS);
+      return () => clearTimeout(t);
+    }
+    const oldest = noticeState.visible[0];
+    if (!oldest) return;
+    const t = setTimeout(() => {
+      dispatchNotice({ type: "mark_oldest_exiting" });
+    }, NOTICE_VISIBLE_MS);
+    return () => clearTimeout(t);
+  }, [noticeState.visible]);
+
+  return { notices: noticeState.visible, addNotice };
 }

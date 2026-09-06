@@ -9,6 +9,9 @@ const appShellSource = await readFile(new URL("../components/AppShell.tsx", impo
   + "\n" + await readFile(new URL("../components/TopBar.tsx", import.meta.url), "utf8");
 const catalogSource = await readFile(new URL("../lib/slash-command-catalog.ts", import.meta.url), "utf8");
 const sessionTypesSource = await readFile(new URL("./agent-session/types.ts", import.meta.url), "utf8");
+const extensionUiSource = await readFile(new URL("./agent-session/extension-ui.ts", import.meta.url), "utf8");
+const coalescersSource = await readFile(new URL("./agent-session/coalescers.ts", import.meta.url), "utf8");
+const scrollSource = await readFile(new URL("./agent-session/scroll.ts", import.meta.url), "utf8");
 
 test("keeps the session event stream open through the idle grace window", () => {
   const finishSource = source.slice(
@@ -287,9 +290,9 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
   assert.match(connectedSource, /agentRunningRef\.current = true/);
   assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatch\(\{ type: "snapshot", message: msg \}\)/);
   assert.match(streamSource, /event\.assistantMessageEvent as ClientAssistantMessageEvent/);
-  assert.match(streamSource, /pendingDeltasRef\.current\.push\(delta\)/);
-  assert.match(streamSource, /requestAnimationFrame/);
-  assert.match(streamSource, /dispatch\(\{ type: "deltaBatch", events: deltas \}\)/);
+  assert.match(coalescersSource, /pendingDeltasRef\.current\.push\(delta\)/);
+  assert.match(coalescersSource, /requestAnimationFrame/);
+  assert.match(coalescersSource, /dispatch\(\{ type: "deltaBatch", events: deltas \}\)/);
   assert.doesNotMatch(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
   assert.match(streamSource, /delta\.type !== "toolcall_start" && delta\.type !== "toolcall_delta"/);
   assert.doesNotMatch(streamSource, /case "message_delta"/);
@@ -331,9 +334,8 @@ test("routes blocking extension requests through deduplicated browser attention 
     appShellSource.indexOf("  const handleAgentEnd = useCallback"),
     appShellSource.indexOf("  const handleAttentionNeeded = useCallback"),
   );
-  const extensionRequestSource = source.slice(
-    source.indexOf("  const handleExtensionUiRequest = useCallback"),
-    source.indexOf("  const settleUiStage = useCallback"),
+  const extensionRequestSource = extensionUiSource.slice(
+    extensionUiSource.indexOf("  const handleExtensionUiRequest = useCallback"),
   );
   const attentionSource = appShellSource.slice(
     appShellSource.indexOf("  const handleAttentionNeeded = useCallback"),
@@ -358,26 +360,24 @@ test("keeps live following cancellable when the user scrolls away from the tail"
     source.indexOf('case "message_start"'),
     source.indexOf('case "message_end"'),
   );
-  const scrollHandlerSource = source.slice(
-    source.indexOf("const handleScrollPositionChange"),
-    source.indexOf("// Load session on mount"),
+  const scrollHandlerSource = scrollSource.slice(
+    scrollSource.indexOf("const handleScrollPositionChange"),
   );
-  const scrollToBottomSource = source.slice(
-    source.indexOf("const scrollToBottom"),
-    source.indexOf("const currentModel"),
+  const scrollToBottomSource = scrollSource.slice(
+    scrollSource.indexOf("const scrollToBottom"),
   );
 
-  assert.match(source, /const liveFollowFrameRef = useRef<number \| null>\(null\)/);
-  assert.match(source, /const previousScrollTopRef = useRef\(0\)/);
-  assert.match(source, /const wasAttached = isNearBottomRef\.current;[\s\S]*?const isAttached = getLiveFollowAttached\([\s\S]*?wasAttached,[\s\S]*?previousScrollTopRef\.current,[\s\S]*?scrollTop,[\s\S]*?clientHeight,[\s\S]*?scrollHeight/);
+  assert.match(scrollSource, /const liveFollowFrameRef = useRef<number \| null>\(null\)/);
+  assert.match(scrollSource, /const previousScrollTopRef = useRef\(0\)/);
+  assert.match(scrollSource, /const wasAttached = isNearBottomRef\.current;[\s\S]*?const isAttached = getLiveFollowAttached\([\s\S]*?wasAttached,[\s\S]*?previousScrollTopRef\.current,[\s\S]*?scrollTop,[\s\S]*?clientHeight,[\s\S]*?scrollHeight/);
   assert.match(scrollHandlerSource, /const isAgentRunning = agentRunningRef\.current;[\s\S]*?isAgentRunning\s*\? CHAT_SCROLL_REATTACH_TOLERANCE\s*:\s*CHAT_SCROLL_TAIL_TOLERANCE/);
-  assert.match(source, /previousScrollTopRef\.current = scrollTop/);
-  assert.match(scrollToBottomSource, /messagesEndRef\.current\?\.scrollIntoView\(\{ behavior \}\);\s*if \(container\) previousScrollTopRef\.current = container\.scrollTop/);
+  assert.match(scrollSource, /previousScrollTopRef\.current = scrollTop/);
+  assert.match(scrollToBottomSource, /messagesEndRef\.current\?\.scrollIntoView\(\{ behavior \}\);\s*\}\s*if \(container\) previousScrollTopRef\.current = container\.scrollTop/);
   assert.match(streamUpdateSource, /liveFollowFrameRef\.current === null/);
   assert.match(streamUpdateSource, /requestAnimationFrame\(\(\) => \{[\s\S]*?liveFollowFrameRef\.current = null;[\s\S]*?if \(isNearBottomRef\.current\) scrollToBottom\("auto"\)/);
   assert.match(scrollHandlerSource, /!wasAttached && isAttached && isAgentRunning[\s\S]*?scrollToBottom\("auto"\)/);
   assert.match(scrollHandlerSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
-  assert.match(source, /previousScrollTopRef\.current = container\.scrollTop;\s*container\.addEventListener\("scroll", handleScrollPositionChange/);
+  assert.match(scrollSource, /previousScrollTopRef\.current = container\.scrollTop;\s*container\.addEventListener\("scroll", handleScrollPositionChange/);
   assert.doesNotMatch(source, /SCROLL_BOTTOM_THRESHOLD|completionScrollAllowedRef|ignoreProgrammaticScrollUntilRef/);
 });
 
@@ -386,17 +386,16 @@ test("keeps a newly sent user message at the top while its response starts", () 
     source.indexOf('case "message_start"'),
     source.indexOf('case "message_end"'),
   );
-  const userScrollSource = source.slice(
-    source.indexOf("const scrollUserMsgToTop"),
-    source.indexOf("const handleScrollPositionChange"),
+  const userScrollSource = scrollSource.slice(
+    scrollSource.indexOf("const scrollUserMsgToTop"),
+    scrollSource.indexOf("const handleScrollPositionChange"),
   );
-  const scrollEffectSource = source.slice(
-    source.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
-    source.indexOf("// Load model list"),
+  const scrollEffectSource = scrollSource.slice(
+    scrollSource.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
   );
 
   assert.match(streamUpdateSource, /!pendingScrollToUserRef\.current && isNearBottomRef\.current/);
-  assert.match(source, /const \[promptAnchorActive, setPromptAnchorActive\] = useState\(false\)/);
+  assert.match(scrollSource, /const \[promptAnchorActive, setPromptAnchorActive\] = useState\(false\)/);
   assert.match(source, /pendingScrollToUserRef\.current = true;\s*setPromptAnchorActive\(true\)/);
   assert.match(userScrollSource, /const targetTop = Math\.min\(Math\.max\(0, elAbsTop - 16\), maxScrollTop\)/);
   assert.match(userScrollSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
@@ -455,14 +454,13 @@ test("uses the prompt anchor as the only trailing message spacer", () => {
 });
 
 test("keeps a detached viewport in place when streaming completes", () => {
-  const scrollEffectSource = source.slice(
-    source.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
-    source.indexOf("// Load model list"),
+  const scrollEffectSource = scrollSource.slice(
+    scrollSource.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
   );
 
   assert.match(scrollEffectSource, /isNearBottomRef\.current[\s\S]*?scrollToBottom\("auto"\)/);
   assert.doesNotMatch(scrollEffectSource, /\|\|/);
-  assert.match(source, /addEventListener\("scroll", handleScrollPositionChange/);
+  assert.match(scrollSource, /addEventListener\("scroll", handleScrollPositionChange/);
 });
 test("routes the builtin /model command through get_state and set_model", () => {
   const slashSource = source.slice(
