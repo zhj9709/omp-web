@@ -101,6 +101,8 @@ export const enLocale: LocalePlugin = {
     "sidebar.new": "New",
     "sidebar.searchSessions": "Search sessions",
     "sidebar.workspaces": "Projects",
+    "sidebar.expandAll": "Expand all projects",
+    "sidebar.collapseAll": "Collapse all projects",
     "sidebar.locateSession": "Locate current session",
     "sidebar.viewOptions": "View options",
     "sidebar.viewGroups": "Group by project",

@@ -779,6 +779,37 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     });
   }, []);
 
+  // Global expand / collapse for the whole project tree. One toggle whose label
+  // and icon follow the current state, so it always offers the action the user
+  // still needs: "expanded" means every group shows everything it can.
+  const allProjectsExpanded = useMemo(() => {
+    if (projectGroups.length === 0) return false;
+    return projectGroups.every((group) => {
+      const state = expandState[group.key];
+      if (group.sessions.length > 5) {
+        return state !== undefined && "state" in state && state.state === "all";
+      }
+      return !(state !== undefined && "hidden" in state && state.hidden);
+    });
+  }, [expandState, projectGroups]);
+
+  const toggleAllProjects = useCallback(() => {
+    const expand = !allProjectsExpanded;
+    setExpandState((prev) => {
+      const next = { ...prev };
+      for (const group of projectGroups) {
+        if (group.sessions.length > 5) {
+          // Large groups: "all" fully expanded, absent key = collapsed.
+          if (expand) next[group.key] = { state: "all" };
+          else delete next[group.key];
+        } else {
+          next[group.key] = { hidden: !expand };
+        }
+      }
+      return next;
+    });
+  }, [allProjectsExpanded, projectGroups]);
+
   // Auto-pin the project of the selected session on first hydration of pinned
   // storage, and bump lastOpenedAt on every visit. Visiting a project is the
   // strongest signal the user wants it in their sidebar across browsers.
@@ -1152,25 +1183,51 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         ) : (
           <span className={styles.toolbarLabel}>{t("sidebar.workspaces")}</span>
         )}
-        {/* While the search box is open it takes over this slot: the box is
-            flex:1, so dropping the locator lets it grow over where the icon was
-            instead of leaving a gap between the input and the search button. */}
+        {/* Tree controls sit right of the "Projects" label. While the search box
+            is open it takes over this slot: the box is flex:1, so dropping both
+            icons lets it grow over where they were instead of leaving a gap
+            between the input and the search button (and neither control means
+            anything against the flat search results anyway). */}
         {!searchOpen && (
-          <button
-            className={styles.iconButton}
-            title={t("sidebar.locateSession")}
-            aria-label={t("sidebar.locateSession")}
-            disabled={!selectedSessionId}
-            onClick={locateCurrentSession}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="6.5" />
-              <line x1="12" y1="1.5" x2="12" y2="4.5" />
-              <line x1="12" y1="19.5" x2="12" y2="22.5" />
-              <line x1="1.5" y1="12" x2="4.5" y2="12" />
-              <line x1="19.5" y1="12" x2="22.5" y2="12" />
-            </svg>
-          </button>
+          <>
+            <button
+              className={styles.iconButton}
+              title={t(allProjectsExpanded ? "sidebar.collapseAll" : "sidebar.expandAll")}
+              aria-label={t(allProjectsExpanded ? "sidebar.collapseAll" : "sidebar.expandAll")}
+              aria-pressed={allProjectsExpanded}
+              disabled={projectGroups.length === 0}
+              onClick={toggleAllProjects}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {allProjectsExpanded ? (
+                  <>
+                    <polyline points="7 18 12 13 17 18" />
+                    <polyline points="7 11 12 6 17 11" />
+                  </>
+                ) : (
+                  <>
+                    <polyline points="7 6 12 11 17 6" />
+                    <polyline points="7 13 12 18 17 13" />
+                  </>
+                )}
+              </svg>
+            </button>
+            <button
+              className={styles.iconButton}
+              title={t("sidebar.locateSession")}
+              aria-label={t("sidebar.locateSession")}
+              disabled={!selectedSessionId}
+              onClick={locateCurrentSession}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="6.5" />
+                <line x1="12" y1="1.5" x2="12" y2="4.5" />
+                <line x1="12" y1="19.5" x2="12" y2="22.5" />
+                <line x1="1.5" y1="12" x2="4.5" y2="12" />
+                <line x1="19.5" y1="12" x2="22.5" y2="12" />
+              </svg>
+            </button>
+          </>
         )}
         <button
           className={styles.iconButton}

@@ -69,6 +69,23 @@ test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
 });
 
+test("expand/collapse all projects is one state-driven toggle", () => {
+  const toggleSource = source.slice(
+    source.indexOf("const toggleAllProjects = useCallback"),
+    source.indexOf("// Auto-pin the project"),
+  );
+
+  assert.match(source, /const allProjectsExpanded = useMemo\(\(\) => \{/);
+  // "Expanded" means every group shows everything it can.
+  assert.match(source, /state !== undefined && "state" in state && state\.state === "all"/);
+  assert.match(toggleSource, /if \(expand\) next\[group\.key\] = \{ state: "all" \};\s*else delete next\[group\.key\]/);
+  assert.match(toggleSource, /next\[group\.key\] = \{ hidden: !expand \}/);
+  // One button whose label, icon and pressed state follow the current state.
+  assert.match(source, /t\(allProjectsExpanded \? "sidebar\.collapseAll" : "sidebar\.expandAll"\)/);
+  assert.match(source, /aria-pressed=\{allProjectsExpanded\}/);
+  assert.match(source, /disabled=\{projectGroups\.length === 0\}/);
+});
+
 test("locate current session expands its project, then scrolls to and flashes the row", () => {
   const locateSource = source.slice(
     source.indexOf("const locateCurrentSession = useCallback"),
