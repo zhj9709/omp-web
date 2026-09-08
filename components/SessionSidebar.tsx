@@ -277,7 +277,7 @@ function OmpWebTitle() {
       onClick={handleClick}
       style={{
         background: "none", border: "none", padding: 0, cursor: "default",
-        fontWeight: 600, fontSize: 18, letterSpacing: "0.04em",
+        fontWeight: 600, fontSize: 15, letterSpacing: "0.04em",
         color: showVersion ? "var(--accent)" : "var(--alias-label-primary)",
         fontFamily: "var(--font-mono)",
         minWidth: "6ch",
