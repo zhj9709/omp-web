@@ -914,8 +914,10 @@ function ThinkingBlock({ block, isStreaming, duration, sessionId, entryId, block
   const [error, setError] = useState<string | null>(null);
   // The reasoning stream is just as bursty as the answer text — buffer it
   // through the typewriter so an expanded thinking block reveals smoothly
-  // instead of popping in one chunk.
-  const thinkingText = useTypewriterText(block.thinking, Boolean(isStreaming));
+  // instead of popping in one chunk. trimStart() drops a leading blank line
+  // that some upstream models emit; pre-wrap would otherwise leave a visible
+  // empty first row inside the box.
+  const thinkingText = useTypewriterText(block.thinking, Boolean(isStreaming)).replace(/^\s*\n/, "");
 
   const toggle = async () => {
     const nextExpanded = !expanded;
@@ -929,7 +931,10 @@ function ThinkingBlock({ block, isStreaming, duration, sessionId, entryId, block
     setLoading(true);
     setError(null);
     try {
-      setContent(await loadThinkingContent(sessionId, entryId, blockIndex));
+      // Drop a leading blank line so the expanded panel does not start with
+      // a visible empty first row.
+      const raw = await loadThinkingContent(sessionId, entryId, blockIndex);
+      setContent(raw.replace(/^\s*\n/, ""));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -948,6 +953,7 @@ function ThinkingBlock({ block, isStreaming, duration, sessionId, entryId, block
     >
       <button
         onClick={() => void toggle()}
+        aria-expanded={expanded}
         style={{
           display: "flex",
           alignItems: "center",
@@ -962,6 +968,14 @@ function ThinkingBlock({ block, isStreaming, duration, sessionId, entryId, block
           textAlign: "left",
         }}
       >
+        <svg
+          width="10" height="10" viewBox="0 0 10 10" fill="none"
+          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+          style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform var(--ds-duration-fast) var(--ds-ease-in-out)" }}
+          aria-hidden="true"
+        >
+          <polyline points="3 2 7 5 3 8" />
+        </svg>
          <span>{t("i18n.thinking")}</span>
         {duration !== undefined && (
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
@@ -970,10 +984,10 @@ function ThinkingBlock({ block, isStreaming, duration, sessionId, entryId, block
       {expanded && (
         <div
           style={{
-            padding: "8px 10px",
+            padding: "6px 10px",
             color: error ? "var(--error)" : "var(--text-muted)",
             fontSize: 12,
-            lineHeight: 1.6,
+            lineHeight: 1.55,
             whiteSpace: "pre-wrap",
             background: "var(--bg-panel)",
             borderTop: "1px solid var(--border)",
