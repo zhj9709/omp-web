@@ -474,7 +474,7 @@ export function TopBar({
     }
     if (tokens && tokens.cacheRead > 0 && tokens.input > 0) {
       const cacheHitRate = (tokens.cacheRead / (tokens.input + tokens.cacheRead)) * 100;
-      desktopCacheHitText = `${cacheHitRate.toFixed(0)}%`;
+      desktopCacheHitText = `${cacheHitRate.toFixed(1)}%`;
     }
 
     const tooltipParts: string[] = [];
