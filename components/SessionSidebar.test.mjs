@@ -68,3 +68,47 @@ test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /if \(session\.transient\) return;/);
   assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
 });
+
+test("locate current session expands its project, then scrolls to and flashes the row", () => {
+  const locateSource = source.slice(
+    source.indexOf("const locateCurrentSession = useCallback"),
+    source.indexOf("// Clear the locate fill"),
+  );
+  const scrollSource = source.slice(
+    source.indexOf("// Scroll the located row into view."),
+    source.indexOf("const commitCustomPath = useCallback"),
+  );
+
+  // A live search or a closed project would keep the row out of the DOM.
+  assert.match(locateSource, /if \(searchQuery\) setSearchQuery\(""\);/);
+  assert.match(locateSource, /if \(closedProjects\.has\(key\)\) reopenProject\(key\);/);
+  // Large groups reach "all" only when the target root is past the first five.
+  assert.match(locateSource, /setGroupState\(key, rootIndex >= 0 && rootIndex < 5 \? "five" : "all"\)/);
+  assert.match(locateSource, /setExpandState\(\(prev\) => \(\{ \.\.\.prev, \[key\]: \{ hidden: false \} \}\)\)/);
+  assert.match(locateSource, /setLocateToken\(\(token\) => token \+ 1\)/);
+  // Scroll runs after the expansion commit and falls back to the group header.
+  assert.match(scrollSource, /requestAnimationFrame\(run\)/);
+  assert.match(scrollSource, /\[data-session-id=/);
+  assert.match(scrollSource, /\[data-project-key=/);
+  // Highlight is transient: a timer drops the id that drives the ring.
+  assert.match(source, /setTimeout\(\(\) => setLocatedSessionId\(null\), 1600\)/);
+  // Anchors the imperative scroll and the queried rows actually exist.
+  assert.match(source, /ref=\{sessionAreaRef\}/);
+  assert.match(sessionItemSource, /data-session-id=\{session\.id\}/);
+  assert.match(source, /data-project-key=\{group\.key\}/);
+  // The locator sits to the left of search in the toolbar row.
+  const toolbar = source.slice(
+    source.indexOf("className={styles.toolbar}"),
+    source.indexOf("{viewMenuOpen &&"),
+  );
+  assert.ok(
+    toolbar.indexOf('aria-label={t("sidebar.locateSession")}')
+      < toolbar.indexOf('aria-label={t("sidebar.searchSessions")}'),
+  );
+  // The open search box takes over the locator's slot.
+  const locateBlock = toolbar.slice(
+    toolbar.indexOf("{!searchOpen && ("),
+    toolbar.indexOf('aria-label={t("sidebar.searchSessions")}'),
+  );
+  assert.match(locateBlock, /aria-label=\{t\("sidebar\.locateSession"\)\}/);
+});

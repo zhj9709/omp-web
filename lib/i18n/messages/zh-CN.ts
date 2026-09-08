@@ -101,6 +101,7 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.new": "新建",
     "sidebar.searchSessions": "搜索会话",
     "sidebar.workspaces": "项目",
+    "sidebar.locateSession": "定位当前会话",
     "sidebar.viewOptions": "视图选项",
     "sidebar.viewGroups": "按项目分组",
     "sidebar.viewFlat": "平铺列表",

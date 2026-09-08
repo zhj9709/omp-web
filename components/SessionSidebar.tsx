@@ -189,6 +189,17 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
   return roots;
 }
 
+/** True when the subtree rooted at `node` contains the given session id. */
+function sessionTreeContains(node: SessionTreeNode, sessionId: string): boolean {
+  const stack: SessionTreeNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.session.id === sessionId) return true;
+    for (const child of current.children) stack.push(child);
+  }
+  return false;
+}
+
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
 
 function useScramble(target: string, running: boolean): string {
@@ -854,6 +865,98 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
     setDragOverProject(null);
   }, []);
 
+  // ── Locate current session ──────────────────────────────────────────────
+  // With every project collapsed the active session can be off-screen, so this
+  // reopens its project, expands the group far enough to expose the row, then
+  // scrolls the row into view and flashes it. The scroll itself runs in an
+  // effect (below) so it sees the post-expansion DOM.
+  const sessionAreaRef = useRef<HTMLDivElement | null>(null);
+  const [locatedSessionId, setLocatedSessionId] = useState<string | null>(null);
+  const [locateToken, setLocateToken] = useState(0);
+  const [pendingLocate, setPendingLocate] = useState<{ id: string; key: string; nonce: number } | null>(null);
+  const locateNonceRef = useRef(0);
+  const locateHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const locateCurrentSession = useCallback(() => {
+    const id = selectedSessionId;
+    if (!id) return;
+    const session = selectedSession?.id === id ? selectedSession : allSessions.find((s) => s.id === id);
+    if (!session) return;
+    const key = workspaceKeyOf(session);
+
+    // A live search replaces the project tree with flat results and a closed
+    // project is not rendered at all — both would hide the row we scroll to.
+    if (searchQuery) setSearchQuery("");
+    setSearchOpen(false);
+    if (closedProjects.has(key)) reopenProject(key);
+
+    if (viewMode === "groups") {
+      const group = projectGroups.find((g) => g.key === key);
+      const current = expandState[key];
+      if (group && group.sessions.length > 5) {
+        // Large group: "five" shows the first five roots; a target further down
+        // needs "all". Root index (not session index) is what slicing uses.
+        const rootIndex = buildSessionTree(group.sessions)
+          .findIndex((node) => sessionTreeContains(node, id));
+        const state = current !== undefined && "state" in current ? current.state : undefined;
+        const visible = state === "all" || (state === "five" && rootIndex >= 0 && rootIndex < 5);
+        if (!visible) setGroupState(key, rootIndex >= 0 && rootIndex < 5 ? "five" : "all");
+      } else if (current !== undefined && "hidden" in current && current.hidden) {
+        setExpandState((prev) => ({ ...prev, [key]: { hidden: false } }));
+      }
+      // Re-expand collapsed fork parents so a child session is mounted.
+      setLocateToken((token) => token + 1);
+    }
+
+    setLocatedSessionId(id);
+    setPendingLocate({ id, key, nonce: ++locateNonceRef.current });
+  }, [allSessions, closedProjects, expandState, projectGroups, reopenProject, searchQuery, selectedSession, selectedSessionId, setGroupState, viewMode]);
+
+  // Clear the locate fill once it has served its purpose.
+  useEffect(() => {
+    if (!locatedSessionId) return;
+    if (locateHighlightTimerRef.current) clearTimeout(locateHighlightTimerRef.current);
+    locateHighlightTimerRef.current = setTimeout(() => setLocatedSessionId(null), 1600);
+    return () => {
+      if (locateHighlightTimerRef.current) clearTimeout(locateHighlightTimerRef.current);
+    };
+  }, [locatedSessionId]);
+
+  // Scroll the located row into view. rAF waits for the commit that applies the
+  // expansion; the retry covers fork parents that only mount after their own
+  // expansion effect has run.
+  useEffect(() => {
+    if (!pendingLocate) return;
+    let frame = 0;
+    let attempts = 0;
+    const run = () => {
+      const container = sessionAreaRef.current;
+      const row = container?.querySelector<HTMLElement>(`[data-session-id="${pendingLocate.id}"]`) ?? null;
+      const target = row
+        ?? container?.querySelector<HTMLElement>(`[data-project-key="${pendingLocate.key}"]`)
+        ?? null;
+      if (!target) {
+        if (attempts++ < 3) frame = requestAnimationFrame(run);
+        return;
+      }
+      const containerRect = container!.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const targetTop = targetRect.top - containerRect.top + container!.scrollTop;
+      const targetBottom = targetTop + targetRect.height;
+      const viewTop = container!.scrollTop;
+      const viewBottom = viewTop + container!.clientHeight;
+      // Nearest-edge scroll: keep an already visible row still.
+      if (targetTop < viewTop) {
+        container!.scrollTo({ top: Math.max(0, targetTop - 8), behavior: "smooth" });
+      } else if (targetBottom > viewBottom) {
+        container!.scrollTo({ top: targetBottom - container!.clientHeight + 8, behavior: "smooth" });
+      }
+      showScrollbar();
+    };
+    frame = requestAnimationFrame(run);
+    return () => cancelAnimationFrame(frame);
+  }, [pendingLocate, showScrollbar]);
+
   const commitCustomPath = useCallback(async (candidate?: string) => {
     const path = (candidate ?? customPathValue).trim();
     if (!path || customPathValidating) return;
@@ -1049,6 +1152,26 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
         ) : (
           <span className={styles.toolbarLabel}>{t("sidebar.workspaces")}</span>
         )}
+        {/* While the search box is open it takes over this slot: the box is
+            flex:1, so dropping the locator lets it grow over where the icon was
+            instead of leaving a gap between the input and the search button. */}
+        {!searchOpen && (
+          <button
+            className={styles.iconButton}
+            title={t("sidebar.locateSession")}
+            aria-label={t("sidebar.locateSession")}
+            disabled={!selectedSessionId}
+            onClick={locateCurrentSession}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="6.5" />
+              <line x1="12" y1="1.5" x2="12" y2="4.5" />
+              <line x1="12" y1="19.5" x2="12" y2="22.5" />
+              <line x1="1.5" y1="12" x2="4.5" y2="12" />
+              <line x1="19.5" y1="12" x2="22.5" y2="12" />
+            </svg>
+          </button>
+        )}
         <button
           className={styles.iconButton}
           title={t("sidebar.searchSessions")}
@@ -1120,6 +1243,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
 
       {/* Session list — all projects visible simultaneously */}
       <div
+        ref={sessionAreaRef}
         className={styles.sessionArea}
         data-scrollbar-shown={scrollbarShown ? "true" : "false"}
         onMouseEnter={showScrollbar}
@@ -1167,6 +1291,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
                 isSelected={s.id === selectedSessionId}
                 isRunning={runningSessionIds.has(s.id)}
                 isUnread={unreadSessionIds.has(s.id)}
+                isLocated={s.id === locatedSessionId}
                 onClick={() => handleSelectSessionFromList(s)}
                 onRenamed={loadSessions}
                 onDeleted={(id) => {
@@ -1184,6 +1309,7 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
               isSelected={s.id === selectedSessionId}
               isRunning={runningSessionIds.has(s.id)}
               isUnread={unreadSessionIds.has(s.id)}
+              isLocated={s.id === locatedSessionId}
               onClick={() => handleSelectSessionFromList(s)}
               onRenamed={loadSessions}
               onDeleted={(id) => {
@@ -1206,6 +1332,8 @@ export const SessionSidebar = memo(function SessionSidebar({ selectedSessionId, 
             selectedSessionId={selectedSessionId}
             runningSessionIds={runningSessionIds}
             unreadSessionIds={unreadSessionIds}
+            locatedSessionId={locatedSessionId}
+            locateToken={locateToken}
             activity={projectActivity.get(group.key)}
             onSelectSession={handleSelectSessionFromList}
             onRenamed={loadSessions}
@@ -1344,6 +1472,8 @@ function ProjectGroup({
   selectedSessionId,
   runningSessionIds,
   unreadSessionIds,
+  locatedSessionId,
+  locateToken,
   activity,
   onSelectSession,
   onRenamed,
@@ -1369,6 +1499,8 @@ function ProjectGroup({
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
   unreadSessionIds: Set<string>;
+  locatedSessionId?: string | null;
+  locateToken?: number;
   activity: { running: number; unread: number } | undefined;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
@@ -1424,6 +1556,7 @@ function ProjectGroup({
         onDragOver={onDragOver}
         onDrop={(e) => { e.preventDefault(); onDrop?.(); }}
         onDragEnd={onDragEnd}
+        data-project-key={group.key}
         className={[
           styles.projectHeader,
           menuOpen ? styles.projectHeaderMenuOpen : "",
@@ -1509,6 +1642,8 @@ function ProjectGroup({
           selectedSessionId={selectedSessionId}
           runningSessionIds={runningSessionIds}
           unreadSessionIds={unreadSessionIds}
+          locatedSessionId={locatedSessionId}
+          locateToken={locateToken}
           onSelectSession={onSelectSession}
           onRenamed={onRenamed}
           onSessionDeleted={onSessionDeleted}
@@ -1543,6 +1678,8 @@ function SessionTreeItem({
   selectedSessionId,
   runningSessionIds,
   unreadSessionIds,
+  locatedSessionId,
+  locateToken,
   onSelectSession,
   onRenamed,
   onSessionDeleted,
@@ -1552,6 +1689,11 @@ function SessionTreeItem({
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
   unreadSessionIds: Set<string>;
+  /** Id of the row to flash after a locate request. */
+  locatedSessionId?: string | null;
+  /** Bumped on every locate request: re-expands collapsed fork parents so the
+   *  target row is actually mounted before the scroll runs. */
+  locateToken?: number;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
@@ -1559,6 +1701,12 @@ function SessionTreeItem({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const hasChildren = node.children.length > 0;
+
+  // The located session can be a fork child that is not mounted at all while an
+  // ancestor is collapsed, so a locate request re-expands every fork parent.
+  useEffect(() => {
+    if (locateToken) setCollapsed(false);
+  }, [locateToken]);
 
   return (
     <div>
@@ -1579,6 +1727,7 @@ function SessionTreeItem({
           isSelected={node.session.id === selectedSessionId}
           isRunning={runningSessionIds.has(node.session.id)}
           isUnread={unreadSessionIds.has(node.session.id)}
+          isLocated={node.session.id === locatedSessionId}
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
           onDeleted={(id) => onSessionDeleted?.(id)}
@@ -1597,6 +1746,8 @@ function SessionTreeItem({
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
               unreadSessionIds={unreadSessionIds}
+              locatedSessionId={locatedSessionId}
+              locateToken={locateToken}
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
@@ -1721,6 +1872,7 @@ function SessionItem({
   isSelected,
   isRunning,
   isUnread,
+  isLocated = false,
   onClick,
   onRenamed,
   onDeleted,
@@ -1733,6 +1885,8 @@ function SessionItem({
   isSelected: boolean;
   isRunning?: boolean;
   isUnread?: boolean;
+  /** Transient "locate current session" fill (no border/ring). */
+  isLocated?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
   onDeleted?: (id: string) => void;
@@ -1855,11 +2009,13 @@ function SessionItem({
     <div
       onClick={confirmDelete || renaming ? undefined : onClick}
       onContextMenu={confirmDelete || renaming ? undefined : handleContextMenu}
+      data-session-id={session.id}
       className={[
         styles.sessionRow,
         isSelected ? styles.sessionRowSelected : "",
         confirmDelete ? styles.sessionRowConfirm : "",
         menuOpen ? styles.sessionRowMenuOpen : "",
+        isLocated ? styles.sessionRowLocated : "",
       ].filter(Boolean).join(" ")}
       style={{
         paddingLeft: depth > 0 ? depth * 12 + 19 : 19,

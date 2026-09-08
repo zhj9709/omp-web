@@ -95,6 +95,10 @@
   display: flex;
   align-items: center;
   gap: 0;
+  /* Fixed row height: the tallest child is the 26px search box, so without this
+     the row grows 24px → 26px when search opens and shifts the session list
+     below it by a couple of pixels. */
+  height: 26px;
   margin: 0 2px 6px;
   flex-shrink: 0;
 }
@@ -537,6 +541,17 @@
   color: var(--alias-label-primary);
 }
 
+/* Transient fill after "locate current session": the row flashes so the user can
+   see where the list landed, then settles back to its normal fill. No border or
+   ring — the fill alone is enough of a cue and keeps the row chrome unchanged. */
+@keyframes sessionRowLocated {
+  0%, 60% { background: var(--alias-interactive-bg-hover-accent); }
+  100% { background: transparent; }
+}
+.sessionRowLocated {
+  animation: sessionRowLocated 1.6s ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .iconButton,
   .newSession,
@@ -544,5 +559,10 @@
   .rowAction,
   .explorerHeaderButton {
     transition: none;
+  }
+  /* Keep the cue as a static fill, drop the fade (a timer removes the class). */
+  .sessionRowLocated {
+    animation: none;
+    background: var(--alias-interactive-bg-hover-accent);
   }
 }
