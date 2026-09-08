@@ -229,7 +229,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     initialScrollDoneRef, lastUserMsgRef, pendingScrollToUserRef, isNearBottomRef,
     liveFollowFrameRef, promptAnchorPinTopRef,
     messagesEndRef, scrollContainerRef,
-    scrollToBottom, scrollUserMsgToTop,
+    scrollToBottom, jumpToLatest, scrollUserMsgToTop, isNearBottom,
   } = useChatScroll({ agentRunningRef, messages, loading, agentRunning });
   const {
     ensureNewSession, promoteNewSession, ensuringNewSessionRef, newSessionPromotedRef,
@@ -569,6 +569,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentPhase,
     isNew,
     promptAnchorActive,
+    isNearBottom,
     // Refs
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
@@ -579,7 +580,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, handleFastModeChange, handleQueueModeChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
-    scrollToBottom, scrollUserMsgToTop,
+    scrollToBottom, jumpToLatest, scrollUserMsgToTop,
     dispatch, setAgentRunning, setForkingEntryId,
     bashRunning, pendingBash,
     // Subscriptions

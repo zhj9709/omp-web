@@ -252,6 +252,7 @@ export const enLocale: LocalePlugin = {
     "chat.commands": "{count} commands",
     "chat.loadingFiles": "Loading files...",
     "chat.files": "Files · {label}{hint}",
+    "chat.jumpToLatest": "Jump to latest",
     "chat.searchToggle": "Search messages",
     "chat.searchPlaceholder": "Search…",
     "chat.searchPrev": "Previous match",

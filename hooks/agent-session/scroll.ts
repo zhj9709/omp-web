@@ -18,6 +18,7 @@ export interface ChatScrollDeps {
 
 export function useChatScroll({ agentRunningRef, messages, loading, agentRunning }: ChatScrollDeps) {
   const [promptAnchorActive, setPromptAnchorActive] = useState(false);
+  const [isNearBottom, setIsNearBottom] = useState(true);
   const initialScrollDoneRef = useRef(false);
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollToUserRef = useRef(false);
@@ -52,6 +53,24 @@ export function useChatScroll({ agentRunningRef, messages, loading, agentRunning
     if (container) previousScrollTopRef.current = container.scrollTop;
   }, []);
 
+  // Explicit "back to the newest content" action behind the floating button.
+  // Attachment is declared here instead of being inferred from the resulting
+  // scroll event: the handler derives attachment from the direction of travel
+  // (scrollTop < previousScrollTop => detached), so a programmatic jump has to
+  // claim attachment up front or the button can linger after the click.
+  //
+  // During the prompt-anchor phase this lands on the pinned anchor rather than
+  // the raw scroll bottom, which is deliberate: the spacer below the content is
+  // blank filler (scrolling there would show an empty strip and live-follow
+  // would snap straight back to the pin), and the newest content renders right
+  // under the pinned user message. Hence the button reads "jump to latest"
+  // rather than "scroll to bottom".
+  const jumpToLatest = useCallback(() => {
+    isNearBottomRef.current = true;
+    setIsNearBottom(true);
+    scrollToBottom("smooth");
+  }, [scrollToBottom]);
+
   const scrollUserMsgToTop = useCallback(() => {
     const container = scrollContainerRef.current;
     const el = lastUserMsgRef.current;
@@ -65,6 +84,7 @@ export function useChatScroll({ agentRunningRef, messages, loading, agentRunning
       liveFollowFrameRef.current = null;
     }
     isNearBottomRef.current = true;
+    setIsNearBottom(true);
     previousScrollTopRef.current = targetTop;
     container.scrollTo({ top: targetTop, behavior: "auto" });
   }, []);
@@ -86,6 +106,7 @@ export function useChatScroll({ agentRunningRef, messages, loading, agentRunning
           : CHAT_SCROLL_TAIL_TOLERANCE,
       );
       isNearBottomRef.current = isAttached;
+      setIsNearBottom(isAttached);
       previousScrollTopRef.current = scrollTop;
       if (!wasAttached && isAttached && isAgentRunning) {
         scrollToBottom("auto");
@@ -137,6 +158,7 @@ export function useChatScroll({ agentRunningRef, messages, loading, agentRunning
   }, []);
 
   return {
+    isNearBottom,
     promptAnchorActive,
     setPromptAnchorActive,
     initialScrollDoneRef,
@@ -148,6 +170,7 @@ export function useChatScroll({ agentRunningRef, messages, loading, agentRunning
     messagesEndRef,
     scrollContainerRef,
     scrollToBottom,
+    jumpToLatest,
     scrollUserMsgToTop,
     handleScrollPositionChange,
   };

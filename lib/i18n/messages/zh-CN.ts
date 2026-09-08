@@ -252,6 +252,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.commands": "{count} 个命令",
     "chat.loadingFiles": "正在加载文件...",
     "chat.files": "文件 · {label}{hint}",
+    "chat.jumpToLatest": "跳转到最新",
     "chat.searchToggle": "搜索消息",
     "chat.searchPlaceholder": "搜索…",
     "chat.searchPrev": "上一个",

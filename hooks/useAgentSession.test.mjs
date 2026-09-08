@@ -415,6 +415,24 @@ test("keeps a newly sent user message at the top while its response starts", () 
   assert.match(chatWindowSource, /const isInitialMeasurement = !promptAnchorAdjustmentDoneRef\.current;[\s\S]*?promptAnchorAdjustmentDoneRef\.current = true;[\s\S]*?if \(needsInitialAdjustment\) scrollUserMsgToTop\(\)/);
 });
 
+test("jumps to the latest content through the scroll hook instead of poking its refs", () => {
+  const jumpSource = scrollSource.slice(
+    scrollSource.indexOf("const jumpToLatest"),
+    scrollSource.indexOf("const scrollUserMsgToTop"),
+  );
+  // Destructured out of useChatScroll and re-exported by useAgentSession.
+  const jumpWiring = source.match(/scrollToBottom, jumpToLatest, scrollUserMsgToTop/g) ?? [];
+
+  assert.match(jumpSource, /isNearBottomRef\.current = true;\s*setIsNearBottom\(true\);\s*scrollToBottom\("smooth"\)/);
+  assert.match(scrollSource, /scrollToBottom,\s*jumpToLatest,\s*scrollUserMsgToTop,/);
+  assert.equal(jumpWiring.length, 2);
+  assert.match(chatWindowSource, /onClick=\{jumpToLatest\}/);
+  assert.match(chatWindowSource, /t\("chat\.jumpToLatest"\)/);
+  // The button must not reach into the hook's attachment ref: marking the tail
+  // as attached belongs to jumpToLatest, which also updates the visible state.
+  assert.doesNotMatch(chatWindowSource, /isNearBottomRef/);
+});
+
 test("keeps prompt anchor measurement outside the React update cycle", () => {
   const anchorEffectStart = chatWindowSource.indexOf(
     "useLayoutEffect(() => {\n    const spacer = promptAnchorSpacerRef.current;",

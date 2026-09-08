@@ -485,12 +485,13 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
     agentPhase,
     isNew,
     promptAnchorActive,
+    isNearBottom,
     sessionIdRef, messagesEndRef, scrollContainerRef, lastUserMsgRef, promptAnchorPinTopRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleModelRoleChange,
     handleCompact, handleHandoff, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, handleFastModeChange, handleQueueModeChange, loadSlashCommands, scrollUserMsgToTop,
+    handleToolPresetChange, handleThinkingLevelChange, handleFastModeChange, handleQueueModeChange, loadSlashCommands, scrollUserMsgToTop, jumpToLatest,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen, onOpenSettings, onOpenNewSession, onOpenPlugins, onOpenCollab,
@@ -1980,6 +1981,53 @@ export const ChatWindow = memo(function ChatWindow({ session, sessionRunning, ne
                 onClose={handleTodosClose}
               />
             </div>
+          </div>
+        )}
+        {/* Floating jump-to-latest affordance: shown only while live follow is
+            detached, i.e. the user scrolled away from the newest content. The
+            `isEmptyNew` guard is defensive — a brand-new empty session has
+            nothing to scroll, so its tail is always attached. */}
+        {!isNearBottom && !isEmptyNew && (
+          <div style={{
+            position: "absolute",
+            bottom: "100%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            paddingBottom: 8,
+            zIndex: 10,
+          }}>
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              title={t("chat.jumpToLatest")}
+              aria-label={t("chat.jumpToLatest")}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 999,
+                border: "1px solid var(--border)",
+                background: "var(--bg-panel)",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "background 0.12s, color 0.12s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = "var(--text)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "var(--bg-panel)";
+                e.currentTarget.style.color = "var(--text-muted)";
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
           </div>
         )}
         {chatInputElement}
